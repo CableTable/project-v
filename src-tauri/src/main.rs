@@ -19,9 +19,53 @@ fn take_launch_files(app: tauri::AppHandle, files: tauri::State<LaunchFiles>) ->
     paths
 }
 
+/// Only an existing absolute .pdf file may get an fs scope grant.
+fn grantable(path: &std::path::Path) -> bool {
+    path.is_absolute()
+        && path.is_file()
+        && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+}
+
 #[tauri::command]
 fn reopen_path(app: tauri::AppHandle, path: PathBuf) -> bool {
-    path.is_absolute() && path.is_file() && app.fs_scope().allow_file(&path).is_ok()
+    grantable(&path) && app.fs_scope().allow_file(&path).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grantable;
+    use std::path::PathBuf;
+
+    fn temp_file(name: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("pv-t3a-{}", name));
+        std::fs::write(&p, b"x").unwrap();
+        p
+    }
+
+    #[test]
+    fn existing_pdf_any_case_is_grantable() {
+        assert!(grantable(&temp_file("a.pdf")));
+        assert!(grantable(&temp_file("b.PDF")));
+    }
+
+    #[test]
+    fn other_extensions_are_refused() {
+        assert!(!grantable(&temp_file("a.pdf.exe")));
+        assert!(!grantable(&temp_file("a.txt")));
+        assert!(!grantable(&temp_file("noext")));
+    }
+
+    #[test]
+    fn relative_directory_and_missing_are_refused() {
+        std::fs::write("pv-t3a-rel.pdf", b"x").unwrap();
+        assert!(!grantable(std::path::Path::new("pv-t3a-rel.pdf")));
+        std::fs::remove_file("pv-t3a-rel.pdf").unwrap();
+        let dir = std::env::temp_dir().join("pv-t3a-dir.pdf");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!grantable(&dir));
+        assert!(!grantable(&std::env::temp_dir().join("pv-t3a-missing.pdf")));
+        assert!(!grantable(std::path::Path::new(r"C:\pv-t3a-missing.PDF")));
+    }
 }
 
 fn main() {
