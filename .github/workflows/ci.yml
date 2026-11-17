@@ -1,6 +1,9 @@
 # Unit tests, then the Rust tests and exe build, on every PR and push to main. (Release job: later, as in Project D.)
 name: Test
 
+env:
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -52,6 +55,8 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Test-Path src-tauri/target/release/ProjectV.exe)) { throw "ProjectV.exe missing" }
+      - name: Test the real window
+        run: node tools/window-test.mjs src-tauri/target/release/ProjectV.exe
       - uses: actions/upload-artifact@v4
         with:
           name: ProjectV-exe

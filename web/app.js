@@ -112,6 +112,10 @@ async function openInD() {
   try {
     const open = () => tauri.core.invoke('open_in_d', { pdf: tab.path });
     if (await open() !== 'pick') return;
+    if (await tauri.core.invoke('test_dir') !== null) {
+      document.body.dataset.vPick = '1';
+      return;
+    }
     const path = await tauri.dialog.open({ title: 'Select ProjectD.exe', filters: [{ name: 'ProjectD.exe', extensions: ['exe'] }] });
     if (!path) return;
     await tauri.core.invoke('set_d_path', { path });

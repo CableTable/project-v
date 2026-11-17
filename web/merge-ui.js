@@ -197,7 +197,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
     busy = true;
     updateControls();
     try {
-      const paths = await tauri.dialog.open({ multiple: true, filters });
+      const paths = await tauri.core.invoke('test_merge_inputs') ?? await tauri.dialog.open({ multiple: true, filters });
       if (paths) add(paths.map(fromPath));
     } catch (error) {
       status.textContent = `Could not select PDFs: ${error?.message || error}`;
@@ -219,9 +219,12 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
         inputs.push({ name: file.name, bytes: await read(file) });
       }
       const bytes = await mergePdfs(inputs);
-      const first = list[0].path;
-      const defaultPath = first ? await tauri.path.join(await tauri.path.dirname(first), 'merged.pdf') : 'merged.pdf';
-      const target = await tauri.dialog.save({ defaultPath, filters });
+      let target = await tauri.core.invoke('test_merge_target');
+      if (target === null) {
+        const first = list[0].path;
+        const defaultPath = first ? await tauri.path.join(await tauri.path.dirname(first), 'merged.pdf') : 'merged.pdf';
+        target = await tauri.dialog.save({ defaultPath, filters });
+      }
       status.textContent = '';
       if (!target) return;
       // shortcut: compare known paths, use filesystem identity if alias detection is needed.

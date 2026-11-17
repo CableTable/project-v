@@ -13,6 +13,11 @@ fn is_project_d(path: &Path) -> bool {
         && path.file_name().is_some_and(|name| name.eq_ignore_ascii_case(D_EXE))
 }
 
+fn test_project_d(dir: &Path) -> Option<PathBuf> {
+    let exe = dir.join(D_EXE);
+    exe.is_file().then_some(exe)
+}
+
 fn find_project_d(setting: &Path, local: Option<&Path>) -> io::Result<Option<PathBuf>> {
     let usable = |path: &Path| is_project_d(path) && path.is_file();
     match fs::read_to_string(setting) {
@@ -44,10 +49,13 @@ pub fn open_in_d(app: tauri::AppHandle, pdf: String) -> Result<&'static str, Str
     if !grantable(Path::new(&pdf)) {
         return Err("Select an existing PDF on disk.".into());
     }
-    let local = env::var_os("LOCALAPPDATA").map(PathBuf::from);
-    let Some(exe) =
+    let exe = if let Some(dir) = crate::test_root()? {
+        test_project_d(&dir)
+    } else {
+        let local = env::var_os("LOCALAPPDATA").map(PathBuf::from);
         find_project_d(&setting_file(&app)?, local.as_deref()).map_err(|e| e.to_string())?
-    else {
+    };
+    let Some(exe) = exe else {
         return Ok("pick");
     };
     spawn_d(&exe, &pdf).map_err(|e| e.to_string())?;
@@ -72,6 +80,19 @@ pub fn set_d_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_lookup_uses_only_root_exe() {
+        let root = env::temp_dir().join(format!("pv-t6-d-{}", std::process::id()));
+        let installed = root.join("Programs/ProjectD/ProjectD.exe");
+        let exe = root.join(D_EXE);
+        fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        fs::write(&installed, []).unwrap();
+        assert_eq!(test_project_d(&root), None);
+        fs::write(&exe, []).unwrap();
+        assert_eq!(test_project_d(&root), Some(exe));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn only_project_d_exe_is_accepted() {

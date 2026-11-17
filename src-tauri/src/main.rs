@@ -4,6 +4,7 @@
 mod launch;
 mod project_d;
 use std::{
+    fs,
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -41,10 +42,68 @@ fn reopen_path(app: tauri::AppHandle, path: PathBuf) -> bool {
     grantable(&path) && app.fs_scope().allow_file(&path).is_ok()
 }
 
+const TEST_DIR_ENV: &str = "PROJECTV_TEST_DIR";
+
+#[tauri::command]
+fn test_dir() -> Option<PathBuf> {
+    std::env::var_os(TEST_DIR_ENV).map(PathBuf::from)
+}
+
+fn test_root() -> Result<Option<PathBuf>, String> {
+    match test_dir() {
+        Some(dir) if dir.is_relative() => std::env::current_dir()
+            .map(|cwd| Some(cwd.join(dir)))
+            .map_err(|e| e.to_string()),
+        dir => Ok(dir),
+    }
+}
+
+#[tauri::command]
+fn test_merge_inputs(app: tauri::AppHandle) -> Result<Option<Vec<PathBuf>>, String> {
+    let Some(dir) = test_root()? else { return Ok(None) };
+    let scope = app.fs_scope();
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(dir.join("in")).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if grantable(&path) {
+            scope.allow_file(&path).map_err(|e| e.to_string())?;
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    Ok(Some(paths))
+}
+
+#[tauri::command]
+fn test_merge_target(app: tauri::AppHandle) -> Result<Option<PathBuf>, String> {
+    let Some(dir) = test_root()? else { return Ok(None) };
+    let out = dir.join("out");
+    fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    let target = out.join("merged.pdf");
+    app.fs_scope().allow_file(&target).map_err(|e| e.to_string())?;
+    Ok(Some(target))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{grant_launch_paths, grantable, launch};
-    use std::path::PathBuf;
+    use super::{grant_launch_paths, grantable, launch, test_dir, TEST_DIR_ENV};
+    use std::{env, path::PathBuf};
+
+    #[test]
+    fn test_dir_is_opt_in() {
+        let before = env::var_os(TEST_DIR_ENV);
+        let dir = env::temp_dir().join("pv-t6");
+        env::remove_var(TEST_DIR_ENV);
+        let unset = test_dir();
+        env::set_var(TEST_DIR_ENV, &dir);
+        let set = test_dir();
+        match before {
+            Some(value) => env::set_var(TEST_DIR_ENV, value),
+            None => env::remove_var(TEST_DIR_ENV),
+        }
+        assert_eq!(unset, None);
+        assert_eq!(set, Some(dir));
+    }
 
     fn temp_file(name: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("pv-t3a-{}", name));
@@ -121,6 +180,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             take_launch_files,
             reopen_path,
+            test_dir,
+            test_merge_inputs,
+            test_merge_target,
             project_d::open_in_d,
             project_d::set_d_path
         ])
