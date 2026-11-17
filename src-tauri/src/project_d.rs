@@ -2,7 +2,7 @@ use crate::grantable;
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Child, Command},
 };
 use tauri::Manager;
 
@@ -50,11 +50,12 @@ pub fn open_in_d(app: tauri::AppHandle, pdf: String) -> Result<&'static str, Str
     else {
         return Ok("pick");
     };
-    Command::new(exe)
-        .arg(pdf)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    spawn_d(&exe, &pdf).map_err(|e| e.to_string())?;
     Ok("opened")
+}
+
+fn spawn_d(exe: &Path, pdf: &str) -> io::Result<Child> {
+    Command::new(exe).arg(pdf).spawn()
 }
 
 #[tauri::command]
@@ -80,6 +81,24 @@ mod tests {
         assert!(!is_project_d(&dir.join("Other.exe")));
         assert!(!is_project_d(&dir.join("ProjectD.exe.bak")));
         assert!(!is_project_d(Path::new("ProjectD.exe")));
+    }
+
+    #[test]
+    fn really_spawns_the_exe_with_a_pdf_path_containing_a_space() {
+        let where_exe = Path::new(r"C:\Windows\System32\where.exe");
+        if !where_exe.is_file() {
+            println!("skipped: where.exe not found (not Windows)");
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("pv-t3b-spawn-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let exe = root.join(D_EXE);
+        let pdf = root.join("a b.pdf");
+        fs::copy(where_exe, &exe).unwrap();
+        fs::write(&pdf, b"%PDF-1.4\n").unwrap();
+        let mut child = spawn_d(&exe, pdf.to_str().unwrap()).expect("spawn returns Ok");
+        child.wait().expect("child is reaped");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
