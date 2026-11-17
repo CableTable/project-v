@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeDoc, layout, pageAt, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, clampZoom, PX_PER_PT, MIN_ZOOM, MAX_ZOOM, GAP, PAD } from './web/doc.js';
+import { makeDoc, layout, pageAt, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, clampZoom, canvasScale, MAX_CANVAS_PIXELS, MAX_CANVAS_SIDE, PX_PER_PT, MIN_ZOOM, MAX_ZOOM, GAP, PAD } from './web/doc.js';
 
 const letter = { w: 612, h: 792 };
 const doc = (n, size = letter) => makeDoc('t.pdf', Array.from({ length: n }, () => size));
@@ -20,10 +20,22 @@ test('layout: pages stack with PAD around and GAP between; 100% is 96 dpi', () =
   assert.deepEqual(lay.tops, [PAD, PAD + h + GAP, PAD + 2 * (h + GAP)]);
   assert.equal(lay.heights[0], h);
   assert.equal(lay.total, 3 * h + 2 * GAP + 2 * PAD);
-  assert.equal(lay.width, 612 * PX_PER_PT + 2 * PAD);
   assert.equal(layout(doc(1), 2).heights[0], 2 * h);
-  const mixed = layout(makeDoc('m', [letter, { w: 1000, h: 100 }]), 1);
-  assert.equal(mixed.width, 1000 * PX_PER_PT + 2 * PAD, 'width is the widest page');
+  assert.equal('width' in lay, false, 'no unused width');
+});
+
+test('canvasScale: normal pages keep their scale; big ones are lowered to 2^25 pixels, no side over 32767', () => {
+  const A0 = { w: 2384, h: 3370 }, strip = { w: 14400, h: 100 };
+  assert.equal(canvasScale(letter.w, letter.h, 1 * PX_PER_PT * 2), 1 * PX_PER_PT * 2, '100% at dpr 2 is untouched');
+  assert.equal(canvasScale(letter.w, letter.h, 1 * PX_PER_PT), 1 * PX_PER_PT);
+  for (const [p, scale] of [[letter, 5 * PX_PER_PT * 2], [A0, 5 * PX_PER_PT], [A0, 5 * PX_PER_PT * 2], [strip, 5 * PX_PER_PT * 2]]) {
+    const s = canvasScale(p.w, p.h, scale), cw = Math.ceil(p.w * s), ch = Math.ceil(p.h * s);
+    assert.ok(s < scale, 'lowered');
+    assert.ok(cw * ch <= MAX_CANVAS_PIXELS, `${cw}x${ch} within 2^25`);
+    assert.ok(cw <= MAX_CANVAS_SIDE && ch <= MAX_CANVAS_SIDE, `${cw}x${ch} within 32767 a side`);
+  }
+  assert.ok(canvasScale(A0.w, A0.h, 5 * PX_PER_PT) > 0.9 * Math.sqrt(MAX_CANVAS_PIXELS / (A0.w * A0.h)), 'uses most of the budget');
+  assert.ok(canvasScale(1000000, 10, 1) * 1000000 <= MAX_CANVAS_SIDE, 'a very long strip is limited by its side');
 });
 
 test('zoom: clamped to MIN..MAX, multiplicative', () => {

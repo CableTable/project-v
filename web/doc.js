@@ -21,7 +21,16 @@ export function layout(doc, zoom) {
   const k = zoom * PX_PER_PT, tops = [], widths = [], heights = [];
   let y = PAD;
   for (const p of doc.pages) { tops.push(y); widths.push(p.w * k); heights.push(p.h * k); y += p.h * k + GAP; }
-  return { tops, widths, heights, total: y - GAP + PAD, width: Math.max(...widths) + 2 * PAD };
+  return { tops, widths, heights, total: y - GAP + PAD };
+}
+
+export const MAX_CANVAS_PIXELS = 2 ** 25, MAX_CANVAS_SIDE = 32767;
+
+/** The render scale for a w × h pt page: `scale` lowered so the canvas stays within 2^25 pixels and 32767 on a side (CSS stretches it to the page box). */
+export function canvasScale(w, h, scale) {
+  const cap = Math.min(Math.sqrt(MAX_CANVAS_PIXELS / (w * h)), MAX_CANVAS_SIDE / Math.max(w, h));
+  // 0.999 leaves room for the canvas size being rounded up to whole pixels
+  return scale <= cap * 0.999 ? scale : cap * 0.999;
 }
 
 /** The page at scroll position y: the last page that starts at or above y (page 0 above the first). Binary search. */

@@ -1,10 +1,10 @@
 // viewer.js — the page view: continuous scroll that renders only the pages in view + 1 (Q4), zoom, Fit, page box, thumbnails.
 // The open document lives in one object (`cur`: model, pdf.js document, zoom, what is rendered) so a tab (T2b) can hold one each.
-import { makeDoc, layout, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, PX_PER_PT, GAP, PAD } from './doc.js';
+import { makeDoc, layout, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, canvasScale, PX_PER_PT, GAP, PAD } from './doc.js';
 
 // pdf.js is loaded on demand, so cold start does not parse its 400 KB.
 const loadPdfjs = () => import('./vendor/pdfjs/pdf.min.mjs');
-const THUMB_W = 96, WHEEL_ZOOM = 1.1, KEY_ZOOM = 1.25;
+const THUMB_W = 96, WHEEL_ZOOM = 1.1, KEY_ZOOM = 1.25, SIZE_BATCH = 50;
 const $ = (id) => document.getElementById(id);
 const view = $('view'), pages = $('pages'), thumbs = $('thumbs'), pageBox = $('page');
 const dpr = () => Math.min(window.devicePixelRatio || 1, 2); // 2x sharpness is enough; more costs memory per canvas
@@ -18,15 +18,20 @@ thumbs.style.setProperty('--tw', THUMB_W + 'px');
 export async function openPdf(name, bytes) {
   const pdfjs = await loadPdfjs();
   pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdfjs/pdf.worker.min.mjs', import.meta.url).href;
+  const task = pdfjs.getDocument({ data: bytes });
   let pdf;
-  try { pdf = await pdfjs.getDocument({ data: bytes }).promise; }
-  catch (e) { throw new Error(`${name}: ${e?.name === 'PasswordException' ? 'needs a password (not supported yet)' : 'not a valid PDF'}`); }
-  let doc;
+  try { pdf = await task.promise; }
+  catch (e) {
+    task.destroy(); // frees the worker side of the failed open
+    const why = e?.name === 'InvalidPDFException' ? 'not a valid PDF' : e?.name === 'PasswordException' ? 'needs a password (not supported yet)' : e?.message || e;
+    throw new Error(`${name}: ${why}`);
+  }
+  const pageSize = async (i) => { const v = (await pdf.getPage(i + 1)).getViewport({ scale: 1 }); return { w: v.width, h: v.height }; };
+  let sizes, doc;
   try {
-    const sizes = await Promise.all(Array.from({ length: pdf.numPages }, async (_, i) => {
-      const v = (await pdf.getPage(i + 1)).getViewport({ scale: 1 });
-      return { w: v.width, h: v.height };
-    }));
+    // Page 1 first: until the other sizes are read every page is laid out like it.
+    const first = await pageSize(0);
+    sizes = Array.from({ length: pdf.numPages }, () => first);
     doc = makeDoc(name, sizes);
   } catch (e) { pdf.destroy(); throw new Error(`${name}: damaged PDF (${e?.message || e})`); }
   closeCur();
@@ -38,6 +43,28 @@ export async function openPdf(name, bytes) {
   setZoom(1);
   view.scrollTop = view.scrollLeft = 0;
   update();
+  readSizes(cur, sizes, pageSize);
+}
+
+/** Reads the sizes of pages 2.. in batches; after each batch the layout (and the pages already drawn) follow. */
+async function readSizes(t, sizes, pageSize) {
+  for (let from = 1; from < sizes.length && !t.closed; from += SIZE_BATCH) {
+    const idx = Array.from({ length: Math.min(SIZE_BATCH, sizes.length - from) }, (_, k) => from + k);
+    const got = await Promise.all(idx.map((i) => pageSize(i).catch((e) => { if (!t.closed) console.warn('page size', i + 1, e); return null; })));
+    if (t.closed) return;
+    const changed = idx.filter((i, k) => got[k] && (got[k].w !== sizes[i].w || got[k].h !== sizes[i].h));
+    if (!changed.length) continue;
+    changed.forEach((i) => { sizes[i] = got[idx.indexOf(i)]; });
+    try { t.doc = makeDoc(t.doc.name, sizes); } catch (e) { console.warn('page sizes', e); return; } // a bad size: keep what is laid out
+    for (const i of changed) {
+      const box = thumbs.children[i].firstChild;
+      box.style.height = (THUMB_W * sizes[i].h) / sizes[i].w + 'px';
+      t.live.get(i)?.task?.cancel();
+      t.live.delete(i); // drawn at the old shape: update() draws it again
+      if (t.liveThumbs.has(i)) paint(t, t.liveThumbs, i, box, (THUMB_W / sizes[i].w) * dpr());
+    }
+    t.fit ? applyFit() : setZoom(t.zoom);
+  }
 }
 
 function closeCur() {
@@ -83,7 +110,7 @@ async function paint(t, live, i, slot, scale) {
   try {
     const page = await t.pdf.getPage(i + 1);
     if (live.get(i) !== rec) return;
-    const vp = page.getViewport({ scale }), canvas = document.createElement('canvas');
+    const p = t.doc.pages[i], vp = page.getViewport({ scale: canvasScale(p.w, p.h, scale) }), canvas = document.createElement('canvas');
     canvas.width = Math.ceil(vp.width);
     canvas.height = Math.ceil(vp.height);
     rec.task = page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
