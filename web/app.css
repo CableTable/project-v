@@ -28,5 +28,13 @@ input.fld{font:inherit;color:inherit;min-width:0;width:3ch;box-sizing:content-bo
 #pages{display:flex;flex-direction:column;align-items:center;gap:var(--gap);padding:var(--pad);box-sizing:border-box;width:max-content;min-width:100%}
 .pg{flex:none;background:#fff;box-shadow:0 1px 4px #0006}
 .pg canvas,.tp canvas{display:block;width:100%;height:100%}
+/* tab strip over the page view: the board has none; head / panel / acc tokens */
+#tabs{flex:none;display:flex;overflow-x:auto;background:var(--head);border-bottom:1px solid var(--line)}
+.tab{flex:none;display:flex;align-items:center;max-width:220px;border-right:1px solid var(--line)}
+.tab.on{background:var(--panel);box-shadow:inset 0 2px 0 var(--acc)}
+.tab button{border:0;border-radius:0;background:none;padding:6px 8px}
+.tl{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.tx{padding:6px 7px!important;color:var(--muted)}
+.tab:hover .tx,.tab.on .tx{color:var(--text)}
 #msgs div{display:flex;gap:8px;align-items:center;padding:4px 10px;background:var(--sel);border-bottom:1px solid var(--line)}
 #msgs span{flex:1}

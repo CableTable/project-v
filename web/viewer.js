@@ -1,5 +1,5 @@
 // viewer.js — the page view: continuous scroll that renders only the pages in view + 1 (Q4), zoom, Fit, page box, thumbnails.
-// The open document lives in one object (`cur`: model, pdf.js document, zoom, what is rendered) so a tab (T2b) can hold one each.
+// A document is one handle (model, pdf.js document, zoom, scroll, what is rendered); a tab (tabs.js) holds one. `cur` is the one on screen.
 import { makeDoc, layout, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, canvasScale, PX_PER_PT, GAP, PAD } from './doc.js';
 
 // pdf.js is loaded on demand, so cold start does not parse its 400 KB.
@@ -14,7 +14,7 @@ pages.style.setProperty('--gap', GAP + 'px');
 pages.style.setProperty('--pad', PAD + 'px');
 thumbs.style.setProperty('--tw', THUMB_W + 'px');
 
-/** Opens a PDF from its bytes and shows it, replacing the open one. Throws Error('<name>: <why>') for a broken or password file. */
+/** Opens a PDF from its bytes and returns its handle (not on screen until show(handle)). Throws Error('<name>: <why>') for a broken or password file. */
 export async function openPdf(name, bytes) {
   const pdfjs = await loadPdfjs();
   pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdfjs/pdf.worker.min.mjs', import.meta.url).href;
@@ -34,16 +34,41 @@ export async function openPdf(name, bytes) {
     sizes = Array.from({ length: pdf.numPages }, () => first);
     doc = makeDoc(name, sizes);
   } catch (e) { pdf.destroy(); throw new Error(`${name}: damaged PDF (${e?.message || e})`); }
-  closeCur();
-  cur = { pdf, doc, zoom: 1, fit: null, lay: layout(doc, 1), live: new Map(), liveThumbs: new Map(), slots: [], sel: -1, closed: false, io: null };
-  build(cur);
+  const t = { pdf, doc, zoom: 1, fit: null, lay: layout(doc, 1), live: new Map(), liveThumbs: new Map(), slots: [], thumbEls: [], sel: -1, closed: false, io: null, scrollTop: 0, scrollLeft: 0 };
+  build(t);
+  sizeSlots(t);
+  readSizes(t, sizes, pageSize);
+  return t;
+}
+
+/** Puts a handle on screen (null: the empty state). The one leaving keeps its scroll and zoom; its big page canvases are freed. */
+export function show(t) {
+  if (t === cur) return;
+  if (cur) {
+    cur.scrollTop = view.scrollTop;
+    cur.scrollLeft = view.scrollLeft;
+    for (const i of [...cur.live.keys()]) drop(cur.live, i, cur.slots[i]);
+  }
+  cur = t;
+  if (!t) return showEmpty();
+  pages.replaceChildren(...t.slots);
+  thumbs.replaceChildren(...t.thumbEls);
   $('empty').hidden = true;
   view.hidden = false;
-  showControls();
-  setZoom(1);
-  view.scrollTop = view.scrollLeft = 0;
-  update();
-  readSizes(cur, sizes, pageSize);
+  setControls(true);
+  $('zoom').textContent = Math.round(t.zoom * 100) + '%';
+  view.scrollTop = t.scrollTop;
+  view.scrollLeft = t.scrollLeft;
+  t.fit ? applyFit() : update();
+  if (side) thumbs.children[t.sel]?.scrollIntoView({ block: 'nearest' });
+}
+
+function showEmpty() {
+  pages.replaceChildren();
+  thumbs.replaceChildren();
+  view.hidden = thumbs.hidden = true;
+  $('empty').hidden = false;
+  setControls(false);
 }
 
 /** Reads the sizes of pages 2.. in batches; after each batch the layout (and the pages already drawn) follow. */
@@ -57,32 +82,31 @@ async function readSizes(t, sizes, pageSize) {
     changed.forEach((i) => { sizes[i] = got[idx.indexOf(i)]; });
     try { t.doc = makeDoc(t.doc.name, sizes); } catch (e) { console.warn('page sizes', e); return; } // a bad size: keep what is laid out
     for (const i of changed) {
-      const box = thumbs.children[i].firstChild;
+      const box = t.thumbEls[i].firstChild;
       box.style.height = (THUMB_W * sizes[i].h) / sizes[i].w + 'px';
       t.live.get(i)?.task?.cancel();
       t.live.delete(i); // drawn at the old shape: update() draws it again
       if (t.liveThumbs.has(i)) paint(t, t.liveThumbs, i, box, (THUMB_W / sizes[i].w) * dpr());
     }
-    t.fit ? applyFit() : setZoom(t.zoom);
+    if (t === cur) t.fit ? applyFit() : setZoom(t.zoom);
+    else { t.lay = layout(t.doc, t.zoom); sizeSlots(t); } // off screen: a Fit zoom is worked out again by show()
   }
 }
 
-function closeCur() {
-  const t = cur;
-  if (!t) return;
+/** Frees a handle: its pdf.js document and renders are destroyed. The tab's owner drops the handle afterwards. */
+export function closeDoc(t) {
   t.closed = true;
   t.io.disconnect();
   for (const rec of [...t.live.values(), ...t.liveThumbs.values()]) rec.task?.cancel();
+  t.live.clear();
+  t.liveThumbs.clear();
   t.pdf.destroy();
-  pages.replaceChildren();
-  thumbs.replaceChildren();
-  cur = null;
+  if (cur === t) { cur = null; showEmpty(); }
 }
 
 function build(t) {
   const el = (tag, cls) => Object.assign(document.createElement(tag), { className: cls });
   t.slots = t.doc.pages.map((_, i) => { const d = el('div', 'pg'); d.dataset.i = i; return d; });
-  pages.replaceChildren(...t.slots);
   t.io = new IntersectionObserver((entries) => {
     for (const { target, isIntersecting } of entries) {
       const i = +target.dataset.i;
@@ -90,7 +114,7 @@ function build(t) {
       if (!t.liveThumbs.has(i)) paint(t, t.liveThumbs, i, target, (THUMB_W / t.doc.pages[i].w) * dpr());
     }
   }, { root: thumbs, rootMargin: '200px' });
-  thumbs.replaceChildren(...t.doc.pages.map((p, i) => {
+  t.thumbEls = t.doc.pages.map((p, i) => {
     const b = el('button', 'th'), box = el('span', 'tp'), n = el('span', 'tn');
     box.dataset.i = i;
     box.style.height = (THUMB_W * p.h) / p.w + 'px';
@@ -99,7 +123,7 @@ function build(t) {
     b.onclick = () => goto(i);
     t.io.observe(box);
     return b;
-  }));
+  });
 }
 
 /** Renders page i into `slot` (a canvas) unless it is already there at this scale; `live` tracks what is on screen. */
@@ -138,9 +162,9 @@ function update() {
   const n = currentPage(t.lay, view.scrollTop, view.clientHeight);
   if (document.activeElement !== pageBox) pageBox.value = n + 1;
   if (t.sel !== n) {
-    thumbs.children[t.sel]?.classList.remove('sel');
-    thumbs.children[n].classList.add('sel');
-    if (side) thumbs.children[n].scrollIntoView({ block: 'nearest' });
+    t.thumbEls[t.sel]?.classList.remove('sel');
+    t.thumbEls[n].classList.add('sel');
+    if (side) t.thumbEls[n].scrollIntoView({ block: 'nearest' });
     t.sel = n;
   }
 }
@@ -178,11 +202,13 @@ function goto(i) {
   if (cur) view.scrollTop = scrollTopFor(cur.lay, Math.min(Math.max(i, 0), cur.doc.pages.length - 1));
 }
 
-function showControls() {
-  for (const id of ['side', 'zout', 'zin', 'fitw', 'fitp', 'page']) $(id).disabled = false;
-  for (const id of ['pagebox', 'zoom']) $(id).classList.remove('off');
-  $('count').textContent = cur.doc.pages.length;
-  thumbs.hidden = !side;
+/** The toolbar of a document (on) or of the empty state (off). */
+function setControls(on) {
+  for (const id of ['side', 'zout', 'zin', 'fitw', 'fitp', 'page']) $(id).disabled = !on;
+  for (const id of ['pagebox', 'zoom']) $(id).classList.toggle('off', !on);
+  $('count').textContent = on ? cur.doc.pages.length : '–';
+  if (!on) { $('zoom').textContent = '–'; pageBox.value = ''; }
+  thumbs.hidden = !on || !side;
 }
 
 // Toolbar, keys, wheel.
