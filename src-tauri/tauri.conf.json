@@ -12,6 +12,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Project V",
         "dragDropEnabled": false,
         "width": 1100,

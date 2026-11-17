@@ -46,7 +46,20 @@ const TEST_DIR_ENV: &str = "PROJECTV_TEST_DIR";
 
 #[tauri::command]
 fn test_dir() -> Option<PathBuf> {
-    std::env::var_os(TEST_DIR_ENV).map(PathBuf::from)
+    // An empty value counts as unset.
+    std::env::var_os(TEST_DIR_ENV)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+const TEST_DEBUG_PORT: u16 = 9243;
+
+/// Browser args for the main window: none in a normal run; in test mode the debug port the window test
+/// attaches to. wry replaces its own default args when any are given, so the default list is repeated.
+fn browser_args(test_dir: Option<&Path>) -> Option<String> {
+    test_dir.map(|_| {
+        format!("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port={TEST_DEBUG_PORT}")
+    })
 }
 
 fn test_root() -> Result<Option<PathBuf>, String> {
@@ -86,8 +99,16 @@ fn test_merge_target(app: tauri::AppHandle) -> Result<Option<PathBuf>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{grant_launch_paths, grantable, launch, test_dir, TEST_DIR_ENV};
-    use std::{env, path::PathBuf};
+    use super::{browser_args, grant_launch_paths, grantable, launch, test_dir, TEST_DIR_ENV};
+    use std::{env, path::{Path, PathBuf}};
+
+    #[test]
+    fn browser_args_only_in_test_mode() {
+        assert_eq!(browser_args(None), None);
+        let args = browser_args(Some(Path::new("pv-t6"))).unwrap();
+        assert!(args.contains("--remote-debugging-port=9243"));
+        assert!(args.contains("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"));
+    }
 
     #[test]
     fn test_dir_is_opt_in() {
@@ -97,11 +118,14 @@ mod tests {
         let unset = test_dir();
         env::set_var(TEST_DIR_ENV, &dir);
         let set = test_dir();
+        env::set_var(TEST_DIR_ENV, "");
+        let empty = test_dir();
         match before {
             Some(value) => env::set_var(TEST_DIR_ENV, value),
             None => env::remove_var(TEST_DIR_ENV),
         }
         assert_eq!(unset, None);
+        assert_eq!(empty, None);
         assert_eq!(set, Some(dir));
     }
 
@@ -177,6 +201,17 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .setup(|app| {
+            // The config window has "create": false so test mode can add its browser args.
+            for cfg in &app.config().app.windows {
+                let mut window = tauri::WebviewWindowBuilder::from_config(app.handle(), cfg)?;
+                if let Some(args) = browser_args(test_dir().as_deref()) {
+                    window = window.additional_browser_args(&args);
+                }
+                window.build()?;
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             take_launch_files,
             reopen_path,
