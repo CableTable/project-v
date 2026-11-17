@@ -2,7 +2,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod launch;
-use std::{path::PathBuf, sync::Mutex};
+mod project_d;
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 use tauri::{Emitter, Manager};
 use tauri_plugin_fs::FsExt;
 
@@ -13,14 +17,20 @@ struct LaunchFiles(Mutex<Vec<PathBuf>>);
 #[tauri::command]
 fn take_launch_files(app: tauri::AppHandle, files: tauri::State<LaunchFiles>) -> Vec<PathBuf> {
     let paths = std::mem::take(&mut *files.0.lock().unwrap());
-    for path in &paths {
-        let _ = app.fs_scope().allow_file(path); // a missing path stays out; the web reports it
-    }
+    grant_launch_paths(&paths, |path| {
+        let _ = app.fs_scope().allow_file(path);
+    });
     paths
 }
 
+fn grant_launch_paths(paths: &[PathBuf], mut allow: impl FnMut(&Path)) {
+    for path in paths.iter().filter(|path| grantable(path)) {
+        allow(path);
+    }
+}
+
 /// Only an existing absolute .pdf file may get an fs scope grant.
-fn grantable(path: &std::path::Path) -> bool {
+fn grantable(path: &Path) -> bool {
     path.is_absolute()
         && path.is_file()
         && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
@@ -33,7 +43,7 @@ fn reopen_path(app: tauri::AppHandle, path: PathBuf) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::grantable;
+    use super::{grant_launch_paths, grantable, launch};
     use std::path::PathBuf;
 
     fn temp_file(name: &str) -> PathBuf {
@@ -53,6 +63,29 @@ mod tests {
         assert!(!grantable(&temp_file("a.pdf.exe")));
         assert!(!grantable(&temp_file("a.txt")));
         assert!(!grantable(&temp_file("noext")));
+    }
+
+    #[test]
+    fn launch_only_grants_existing_pdfs() {
+        let pdf = temp_file("launch.pdf");
+        let txt = temp_file("launch.txt");
+        let cwd = pdf.parent().unwrap();
+        let args = [
+            "ProjectV.exe",
+            txt.file_name().unwrap().to_str().unwrap(),
+            "pv-t3b-missing-launch.pdf",
+            pdf.file_name().unwrap().to_str().unwrap(),
+        ];
+        let paths = launch::file_paths(args.map(str::to_owned), cwd);
+        let mut granted = Vec::new();
+        grant_launch_paths(&paths, |path| granted.push(path.to_path_buf()));
+        std::fs::remove_file(&txt).unwrap();
+        std::fs::remove_file(&pdf).unwrap();
+        assert_eq!(
+            granted,
+            vec![pdf],
+            "only the existing PDF may get a launch grant"
+        );
     }
 
     #[test]
@@ -85,7 +118,12 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![take_launch_files, reopen_path])
+        .invoke_handler(tauri::generate_handler![
+            take_launch_files,
+            reopen_path,
+            project_d::open_in_d,
+            project_d::set_d_path
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Project V");
 }

@@ -2,10 +2,11 @@
 // A document is one handle (model, pdf.js document, zoom, scroll, what is rendered); a tab (tabs.js) holds one. `cur` is the one on screen.
 import { makeDoc, layout, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, canvasScale, PX_PER_PT, GAP, PAD } from './doc.js';
 import { rangesForHits, textNodes } from './find-layer.js';
+import { buildPageLists, THUMB_W } from './page-lists.js';
 
 // pdf.js is loaded on demand, so cold start does not parse its 400 KB.
 const loadPdfjs = () => import('./vendor/pdfjs/pdf.min.mjs');
-const THUMB_W = 96, WHEEL_ZOOM = 1.1, KEY_ZOOM = 1.25, SIZE_BATCH = 50;
+const WHEEL_ZOOM = 1.1, KEY_ZOOM = 1.25, SIZE_BATCH = 50;
 const $ = (id) => document.getElementById(id);
 const view = $('view'), pages = $('pages'), thumbs = $('thumbs'), pageBox = $('page');
 const dpr = () => Math.min(window.devicePixelRatio || 1, 2); // 2x sharpness is enough; more costs memory per canvas
@@ -109,8 +110,6 @@ export function closeDoc(t) {
 }
 
 function build(t) {
-  const el = (tag, cls) => Object.assign(document.createElement(tag), { className: cls });
-  t.slots = t.doc.pages.map((_, i) => { const d = el('div', 'pg'); d.dataset.i = i; return d; });
   t.io = new IntersectionObserver((entries) => {
     for (const { target, isIntersecting } of entries) {
       const i = +target.dataset.i;
@@ -118,16 +117,7 @@ function build(t) {
       if (!t.liveThumbs.has(i)) paint(t, t.liveThumbs, i, target, (THUMB_W / t.doc.pages[i].w) * dpr());
     }
   }, { root: thumbs, rootMargin: '200px' });
-  t.thumbEls = t.doc.pages.map((p, i) => {
-    const b = el('button', 'th'), box = el('span', 'tp'), n = el('span', 'tn');
-    box.dataset.i = i;
-    box.style.height = (THUMB_W * p.h) / p.w + 'px';
-    n.textContent = i + 1; // textContent only: nothing from the file is HTML
-    b.append(box, n);
-    b.onclick = () => goto(i);
-    t.io.observe(box);
-    return b;
-  });
+  Object.assign(t, buildPageLists(t.doc, goto, (box) => t.io.observe(box)));
 }
 
 /** Renders page i into `slot` (a canvas) unless it is already there at this scale; `live` tracks what is on screen. */

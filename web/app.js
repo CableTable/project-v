@@ -4,6 +4,7 @@ import { emptyTabs, activeTab, findByKey, openTab, activate, closeTab, cycle, pa
 import { createMergeWindow } from './merge-ui.js';
 import { createRecentFiles } from './recent-ui.js';
 import { showFind } from './find-ui.js';
+import { canOpenInD, isOpenInDShortcut } from './open-in-d.js';
 
 const tauri = window.__TAURI__;
 const $ = (id) => document.getElementById(id);
@@ -15,6 +16,7 @@ let tabs = emptyTabs(), notes = []; // notes: lines that belong to no tab; a fai
 /** Shows the active tab (the empty state for none, or for a file that failed to open), the strip and the message lines. */
 function render() {
   const now = activeTab(tabs);
+  $('open-in-d').disabled = !canOpenInD(now);
   showFind(now?.doc ?? null);
   show(now?.doc ?? null);
   const strip = $('tabs');
@@ -102,6 +104,26 @@ const merge = createMergeWindow({ tauri, fromPath, fromFile, openResult: (path) 
 const openMerge = () => merge.open(activeTab(tabs));
 $('merge').onclick = openMerge;
 
+let openingInD = false;
+async function openInD() {
+  const tab = activeTab(tabs);
+  if (!tauri || !canOpenInD(tab) || openingInD) return;
+  openingInD = true;
+  try {
+    const open = () => tauri.core.invoke('open_in_d', { pdf: tab.path });
+    if (await open() !== 'pick') return;
+    const path = await tauri.dialog.open({ title: 'Select ProjectD.exe', filters: [{ name: 'ProjectD.exe', extensions: ['exe'] }] });
+    if (!path) return;
+    await tauri.core.invoke('set_d_path', { path });
+    if (await open() === 'pick') say('Could not find ProjectD.exe at the selected path.');
+  } catch (e) {
+    say(`Could not open in Project D: ${e instanceof Error ? e.message : e}`);
+  } finally {
+    openingInD = false;
+  }
+}
+$('open-in-d').onclick = openInD;
+
 async function pickFile() {
   if (!tauri) return;
   const path = await tauri.dialog.open({ filters: [{ name: 'PDF', extensions: ['pdf'] }] }); // null when cancelled
@@ -113,6 +135,7 @@ document.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase(), now = activeTab(tabs);
   if (k === 'o' && !e.shiftKey) { e.preventDefault(); pickFile(); }
   else if (k === 'm' && e.shiftKey) { e.preventDefault(); openMerge(); }
+  else if (isOpenInDShortcut(e)) { e.preventDefault(); openInD(); }
   else if (k === 'tab') { e.preventDefault(); tabs = cycle(tabs, e.shiftKey ? -1 : 1); render(); }
   else if (k === 'w' && !e.shiftKey) { e.preventDefault(); if (now) close(now.id); }
 });
