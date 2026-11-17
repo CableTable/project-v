@@ -1,0 +1,12 @@
+{
+  "name": "project-v",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test *.test.mjs",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

@@ -1,0 +1,25 @@
+[package]
+name = "project-v"
+version = "0.1.0"
+description = "Project V: a fast, simple PDF viewer"
+edition = "2021"
+rust-version = "1.77"
+
+# The exe is ProjectV.exe (also set as mainBinaryName in tauri.conf.json).
+[[bin]]
+name = "ProjectV"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
