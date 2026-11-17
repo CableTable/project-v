@@ -1,4 +1,4 @@
-# Unit tests on every PR and push to main. (Rust build and release jobs: later, as in Project D.)
+# Unit tests, then the Rust tests and exe build, on every PR and push to main. (Release job: later, as in Project D.)
 name: Test
 
 on:
@@ -26,3 +26,29 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  exe:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Rust tests and exe build
+        shell: pwsh
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Rust tests failed" }
+          npx tauri build --no-bundle
+          if ($LASTEXITCODE -ne 0) { throw "Exe build failed" }
+      - name: Check the exe exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path src-tauri/target/release/ProjectV.exe)) { throw "ProjectV.exe missing" }

@@ -3,9 +3,10 @@
   "slug": "project-v",
   "extras": "E:/Project B/Claude/rook-hq",
   "main": "E:/Project B/Claude/Project V",
+  "support": "E:/Project B/Claude/support",
   "github": "CableTable/project-v",
   "test": "npm test",
-  "docs": { "todo": "TODO.md", "workflow": "WORKFLOW.md" },
+  "docs": { "todo": "TODO.md" },
   "folders": {
     "bishop": { "review": "project-v-bishop", "build": "project-v-bishop" },
     "king": { "review": "project-v-king2", "build": "project-v-king" },
