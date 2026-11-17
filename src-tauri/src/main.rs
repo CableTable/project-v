@@ -19,6 +19,11 @@ fn take_launch_files(app: tauri::AppHandle, files: tauri::State<LaunchFiles>) ->
     paths
 }
 
+#[tauri::command]
+fn reopen_path(app: tauri::AppHandle, path: PathBuf) -> bool {
+    path.is_absolute() && path.is_file() && app.fs_scope().allow_file(&path).is_ok()
+}
+
 fn main() {
     let cwd = std::env::current_dir().expect("could not read launch directory");
     tauri::Builder::default()
@@ -36,7 +41,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![take_launch_files])
+        .invoke_handler(tauri::generate_handler![take_launch_files, reopen_path])
         .run(tauri::generate_context!())
         .expect("error while running Project V");
 }

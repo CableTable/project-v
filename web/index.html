@@ -5,26 +5,40 @@
 <title>Project V</title>
 <link rel="stylesheet" href="app.css">
 <body>
-<!-- The board's toolbar (mockups/V1_Viewer.html). Find and Open in Project D come with T3. -->
+<!-- The board's toolbar (mockups/V1_Viewer.html). -->
 <div class="bar">
+  <details id="file-menu">
+    <summary>File</summary>
+    <div class="recent">
+      <h4>Recent files</h4>
+      <div id="menu-recent"></div>
+    </div>
+  </details>
   <button id="open">Open  Ctrl+O</button><button id="side" title="Show or hide the page thumbnails (F4)" aria-pressed="true" disabled>Pages  F4</button><span class="sep"></span>
   <span id="pagebox" class="off"><input id="page" class="fld" size="3" aria-label="Page number" disabled> / <span id="count">–</span></span><span class="sep"></span>
   <button id="zout" class="sq" title="Zoom out (Ctrl+−)" aria-label="Zoom out" disabled>−</button><span id="zoom" class="fld off">–</span><button id="zin" class="sq" title="Zoom in (Ctrl+=)" aria-label="Zoom in" disabled>+</button><span class="sep"></span>
-  <button id="fitw" disabled>Fit width</button><button id="fitp" disabled>Fit page</button><button disabled>Find  Ctrl+F</button>
+  <button id="fitw" disabled>Fit width</button><button id="fitp" disabled>Fit page</button><button id="find" aria-controls="find-bar" aria-expanded="false" aria-keyshortcuts="Control+F" disabled>Find  Ctrl+F</button>
   <button id="merge" title="Merge PDFs (Ctrl+Shift+M)" aria-keyshortcuts="Control+Shift+M">Merge</button>
   <span class="sp"></span>
   <button class="acc" disabled>Open in Project D</button>
 </div>
 <div id="tabs" role="tablist" aria-label="Open documents" hidden></div>
 <div id="msgs" role="status"></div>
+<div id="find-bar" role="search" aria-label="Find in this PDF" hidden>
+  <input id="find-query" type="text" aria-label="Find in this PDF" placeholder="Find in this PDF">
+  <span id="find-status" role="status"></span>
+  <button id="find-prev" title="Previous match (Shift+Enter)" aria-label="Previous match">↑</button>
+  <button id="find-next" title="Next match (Enter)" aria-label="Next match">↓</button>
+  <button id="find-close" title="Close find (Esc)" aria-label="Close find">×</button>
+</div>
 <div class="body">
   <aside id="thumbs" hidden aria-label="Page thumbnails"></aside>
   <div id="view" tabindex="-1" hidden><div id="pages"></div></div>
   <main id="empty" class="empty">
     <div class="drop"><button id="open2">Open a PDF…  Ctrl+O</button><div>or drag a PDF file here</div></div>
     <div class="recent">
-      <h4><span>Recent files</span><span class="note">Clear list</span></h4>
-      <div class="rr"><span>No recent files yet (T3)</span></div>
+      <h4>Recent files</h4>
+      <div id="start-recent"></div>
     </div>
   </main>
 </div>

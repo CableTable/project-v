@@ -1,13 +1,13 @@
 // tabs.js — the open tabs (T2b): pure, no DOM, no pdf.js. A state is { list, active, next }; every function returns a new state.
 // A tab is { id, key, name, title, doc, error }: `key` says which file it is (its path), `doc` is the viewer's handle (null for a file that failed to open),
-// `error` the message that belongs to this tab. The viewer's handle keeps the tab's scroll, zoom and page.
+// The viewer's document handle keeps the tab's scroll, zoom, page and find state.
 
 // Windows paths: no case, either slash.
-const norm = (key) => key.replace(/\//g, '\\').toLowerCase();
+export const pathKey = (key) => key.replace(/\//g, '\\').toLowerCase();
 
 export const emptyTabs = () => ({ list: [], active: null, next: 1 });
 export const activeTab = (s) => s.list.find((t) => t.id === s.active);
-export const findByKey = (s, key) => s.list.find((t) => norm(t.key) === norm(key));
+export const findByKey = (s, key) => s.list.find((t) => pathKey(t.key) === pathKey(key));
 
 /** Appends a tab ({ key, name, title, doc, error }) and makes it the active one. */
 export function openTab(s, tab) {

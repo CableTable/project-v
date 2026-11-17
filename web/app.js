@@ -2,6 +2,8 @@
 import { openPdf, show, closeDoc } from './viewer.js';
 import { emptyTabs, activeTab, findByKey, openTab, activate, closeTab, cycle, patchTab } from './tabs.js';
 import { createMergeWindow } from './merge-ui.js';
+import { createRecentFiles } from './recent-ui.js';
+import { showFind } from './find-ui.js';
 
 const tauri = window.__TAURI__;
 const $ = (id) => document.getElementById(id);
@@ -13,6 +15,7 @@ let tabs = emptyTabs(), notes = []; // notes: lines that belong to no tab; a fai
 /** Shows the active tab (the empty state for none, or for a file that failed to open), the strip and the message lines. */
 function render() {
   const now = activeTab(tabs);
+  showFind(now?.doc ?? null);
   show(now?.doc ?? null);
   const strip = $('tabs');
   strip.hidden = !tabs.list.length;
@@ -70,6 +73,7 @@ function openAll(items, replaceExisting = false) {
         catch (e) { error = e instanceof Error ? e.message : String(e); }
         tabs = openTab(tabs, { ...item, doc, error });
       }
+      if (item.path && activeTab(tabs)?.doc) remember(item.path);
       render();
     }
   });
@@ -91,6 +95,8 @@ const fromFile = (file) => ({
   key: `drop:${file.name}|${file.size}|${file.lastModified}`, name: file.name, title: file.name,
   read: async () => new Uint8Array(await file.arrayBuffer()),
 });
+
+const remember = createRecentFiles({ tauri, open: (path) => openAll([fromPath(path)]), say });
 
 const merge = createMergeWindow({ tauri, fromPath, fromFile, openResult: (path) => openAll([fromPath(path)], true) });
 const openMerge = () => merge.open(activeTab(tabs));

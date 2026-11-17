@@ -1,6 +1,7 @@
 // viewer.js — the page view: continuous scroll that renders only the pages in view + 1 (Q4), zoom, Fit, page box, thumbnails.
 // A document is one handle (model, pdf.js document, zoom, scroll, what is rendered); a tab (tabs.js) holds one. `cur` is the one on screen.
 import { makeDoc, layout, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, canvasScale, PX_PER_PT, GAP, PAD } from './doc.js';
+import { rangesForHits, textNodes } from './find-layer.js';
 
 // pdf.js is loaded on demand, so cold start does not parse its 400 KB.
 const loadPdfjs = () => import('./vendor/pdfjs/pdf.min.mjs');
@@ -34,7 +35,8 @@ export async function openPdf(name, bytes) {
     sizes = Array.from({ length: pdf.numPages }, () => first);
     doc = makeDoc(name, sizes);
   } catch (e) { pdf.destroy(); throw new Error(`${name}: damaged PDF (${e?.message || e})`); }
-  const t = { pdf, doc, zoom: 1, fit: null, lay: layout(doc, 1), live: new Map(), liveThumbs: new Map(), slots: [], thumbEls: [], sel: -1, closed: false, io: null, scrollTop: 0, scrollLeft: 0 };
+  const t = { pdf, doc, zoom: 1, fit: null, lay: layout(doc, 1), live: new Map(), liveThumbs: new Map(), slots: [], thumbEls: [], sel: -1, closed: false, io: null, scrollTop: 0, scrollLeft: 0,
+    TextLayer: pdfjs.TextLayer, find: { open: false, query: '', result: null, reveal: null } };
   build(t);
   sizeSlots(t);
   readSizes(t, sizes, pageSize);
@@ -60,6 +62,7 @@ export function show(t) {
   view.scrollTop = t.scrollTop;
   view.scrollLeft = t.scrollLeft;
   t.fit ? applyFit() : update();
+  if (t.find.reveal) revealFindHit(t.find.reveal);
   if (side) thumbs.children[t.sel]?.scrollIntoView({ block: 'nearest' });
 }
 
@@ -69,6 +72,7 @@ function showEmpty() {
   view.hidden = thumbs.hidden = true;
   $('empty').hidden = false;
   setControls(false);
+  refreshFind();
 }
 
 /** Reads the sizes of pages 2.. in batches; after each batch the layout (and the pages already drawn) follow. */
@@ -84,7 +88,7 @@ async function readSizes(t, sizes, pageSize) {
     for (const i of changed) {
       const box = t.thumbEls[i].firstChild;
       box.style.height = (THUMB_W * sizes[i].h) / sizes[i].w + 'px';
-      t.live.get(i)?.task?.cancel();
+      cancelPaint(t.live.get(i));
       t.live.delete(i); // drawn at the old shape: update() draws it again
       if (t.liveThumbs.has(i)) paint(t, t.liveThumbs, i, box, (THUMB_W / sizes[i].w) * dpr());
     }
@@ -97,7 +101,7 @@ async function readSizes(t, sizes, pageSize) {
 export function closeDoc(t) {
   t.closed = true;
   t.io.disconnect();
-  for (const rec of [...t.live.values(), ...t.liveThumbs.values()]) rec.task?.cancel();
+  for (const rec of [...t.live.values(), ...t.liveThumbs.values()]) cancelPaint(rec);
   t.live.clear();
   t.liveThumbs.clear();
   t.pdf.destroy();
@@ -128,7 +132,7 @@ function build(t) {
 
 /** Renders page i into `slot` (a canvas) unless it is already there at this scale; `live` tracks what is on screen. */
 async function paint(t, live, i, slot, scale) {
-  live.get(i)?.task?.cancel();
+  cancelPaint(live.get(i));
   const rec = { scale, task: null };
   live.set(i, rec);
   try {
@@ -139,13 +143,99 @@ async function paint(t, live, i, slot, scale) {
     canvas.height = Math.ceil(vp.height);
     rec.task = page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
     await rec.task.promise;
-    if (live.get(i) === rec) slot.replaceChildren(canvas); // the old canvas stays (stretched) until the new one is ready
+    if (live.get(i) !== rec) return;
+    slot.replaceChildren(canvas); // the old canvas stays (stretched) until the new one is ready
+    if (live === t.live) {
+      rec.page = page;
+      refreshFind();
+    }
   } catch (e) {
     if (live.get(i) === rec) live.delete(i);
     if (e?.name !== 'RenderingCancelledException' && !t.closed) console.warn('render page', i + 1, e);
   }
 }
-function drop(live, i, slot) { live.get(i)?.task?.cancel(); live.delete(i); slot.replaceChildren(); }
+function cancelPaint(rec) { rec?.task?.cancel(); rec?.layer?.cancel(); }
+function drop(live, i, slot) { cancelPaint(live.get(i)); live.delete(i); slot.replaceChildren(); }
+
+async function paintFindLayer(t, rec, i) {
+  rec.textRequested = true;
+  try {
+    const content = await rec.page.getTextContent();
+    if (t.live.get(i) !== rec) return;
+    const viewport = rec.page.getViewport({ scale: t.zoom * PX_PER_PT });
+    const container = document.createElement('div');
+    container.className = 'find-text-layer';
+    container.setAttribute('aria-hidden', 'true');
+    container.style.setProperty('--scale-factor', viewport.scale);
+    rec.layer = new t.TextLayer({ container, viewport, textContentSource: content });
+    await rec.layer.render();
+    if (t.live.get(i) !== rec) return;
+    t.slots[i].append(container);
+    rec.nodes = textNodes(content.items, rec.layer.textDivs);
+    rec.layer = null;
+    refreshFind();
+  } catch (error) {
+    if (t.live.get(i) !== rec) return;
+    rec.nodes = [];
+    rec.layer = null;
+    console.warn('Render PDF text', i + 1, error);
+    refreshFind();
+  }
+}
+
+let findHighlights, currentHighlight;
+function refreshFind() {
+  const t = cur, result = t?.find.open ? t.find.result : null;
+  if (!result?.hits.length && !findHighlights) return;
+  if (!findHighlights) {
+    findHighlights = new Highlight();
+    currentHighlight = new Highlight();
+    CSS.highlights.set('pdf-find', findHighlights);
+    CSS.highlights.set('pdf-find-current', currentHighlight);
+  }
+  findHighlights.clear();
+  currentHighlight.clear();
+  if (!result?.hits.length) return;
+  for (const [i, rec] of t.live) {
+    const hits = result.byPage.get(i);
+    if (!hits || !rec.page) continue;
+    if (!rec.textRequested) paintFindLayer(t, rec, i);
+    if (!rec.nodes) continue;
+    if (rec.hits !== hits) {
+      rec.hits = hits;
+      rec.ranges = rangesForHits(rec.nodes, hits);
+    }
+    for (let j = 0; j < hits.length; j++) {
+      const hit = hits[j], ranges = rec.ranges[j];
+      const highlight = hit === result.hits[result.index] ? currentHighlight : findHighlights;
+      for (const range of ranges) highlight.add(range);
+      if (t.find.reveal === hit) {
+        t.find.reveal = null;
+        if (ranges.length) scrollToRange(ranges[0]);
+      }
+    }
+  }
+}
+
+function scrollToRange(range) {
+  const rect = range.getBoundingClientRect(), box = view.getBoundingClientRect();
+  if (rect.top < box.top || rect.bottom > box.top + view.clientHeight) {
+    view.scrollTop += rect.top - box.top - view.clientHeight / 2;
+  }
+  if (rect.left < box.left || rect.right > box.left + view.clientWidth) {
+    view.scrollLeft += rect.left - box.left - view.clientWidth / 2;
+  }
+}
+
+export function revealFindHit(hit) {
+  if (!cur) return;
+  cur.find.reveal = hit;
+  if (hit) {
+    const slot = cur.slots[hit.page].getBoundingClientRect(), box = view.getBoundingClientRect();
+    if (slot.bottom <= box.top || slot.top >= box.bottom) { goto(hit.page); update(); return; }
+  }
+  refreshFind();
+}
 
 /** Sizes the page slots for the current zoom; no pixels are drawn here. */
 function sizeSlots(t) {
@@ -167,6 +257,7 @@ function update() {
     if (side) t.thumbEls[n].scrollIntoView({ block: 'nearest' });
     t.sel = n;
   }
+  refreshFind();
 }
 
 /** Zoom to z keeping the view point (cx, cy) (px in the view) on the same spot of the same page. */

@@ -3,18 +3,27 @@
 @media (prefers-color-scheme:dark){:root{--panel:#3b4453;--head:#2e3440;--line:#1c1f24;--text:#e6e8eb;--muted:#9ba2ac;--field:#23272d;--sel:#14516e;--acc:#5aa2ff;--canvas:#1b1e23}}
 html,body{height:100%;margin:0}
 body{background:var(--panel);color:var(--text);font:12px system-ui;display:flex;flex-direction:column}
-.bar{height:36px;display:flex;align-items:center;gap:6px;padding:0 8px;border-bottom:1px solid var(--line);flex:none}
+.bar{min-height:36px;box-sizing:border-box;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px solid var(--line);flex:none}
 .sp{flex:1}.sep{width:1px;height:20px;background:var(--line)}
 button{font:inherit;color:inherit;padding:3px 9px;border:1px solid var(--line);border-radius:3px;background:var(--field);white-space:nowrap}
 button.sq{min-width:26px;padding:3px 8px}button.acc{background:var(--acc);border-color:var(--acc);color:#fff}
 button:disabled,.off{opacity:.45}
 .fld{display:inline-block;min-width:40px;padding:2px 5px;background:var(--field);border:1px solid var(--line);border-radius:2px;text-align:center}
-.empty{flex:1;background:var(--canvas);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+.empty{flex:1;background:var(--canvas);display:flex;flex-direction:column;align-items:center;justify-content:safe center;gap:14px;overflow:auto;padding:14px}
 .drop{width:420px;padding:22px;border:2px dashed var(--muted);border-radius:8px;text-align:center;color:var(--muted);background:#0000000d;box-sizing:border-box}
 .drop button{font-size:14px;padding:7px 22px;margin-bottom:10px}
 .recent{width:420px;background:var(--panel);border:1px solid var(--line);border-radius:4px}
 .recent h4{margin:0;padding:5px 10px;background:var(--head);border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
-.rr{display:flex;gap:8px;padding:5px 10px;color:var(--muted)}.note{color:var(--muted);font-weight:400}
+.rr{display:flex;gap:8px;padding:5px 10px;color:var(--muted)}
+#file-menu{position:relative;z-index:2}
+#file-menu summary{cursor:pointer;padding:3px 8px;border:1px solid var(--line);border-radius:3px;background:var(--field)}
+#file-menu .recent{position:absolute;top:100%;left:0;margin-top:3px;box-shadow:0 3px 9px #0004}
+#menu-recent,#start-recent{max-height:40vh;overflow:auto}
+.rr button:first-child{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis}
+.rr .missing{color:var(--muted);background:var(--panel)}
+#find-bar{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex:none;padding:4px 8px;border-bottom:1px solid var(--line)}
+#find-query{font:inherit;color:inherit;background:var(--field);border:1px solid var(--line);border-radius:3px;padding:3px 6px}
+#find-status{min-width:4em;text-align:center}
 [hidden]{display:none!important}
 input.fld{font:inherit;color:inherit;min-width:0;width:3ch;box-sizing:content-box}
 /* open document: thumbnails left, pages right; pages are white in dark mode too (the paper) */
@@ -26,8 +35,16 @@ input.fld{font:inherit;color:inherit;min-width:0;width:3ch;box-sizing:content-bo
 .tn{display:block;margin-top:3px;color:var(--muted)}
 #view{flex:1;min-width:0;overflow:auto scroll;background:var(--canvas);outline:none}
 #pages{display:flex;flex-direction:column;align-items:center;gap:var(--gap);padding:var(--pad);box-sizing:border-box;width:max-content;min-width:100%}
-.pg{flex:none;background:#fff;box-shadow:0 1px 4px #0006}
+.pg{position:relative;overflow:hidden;flex:none;background:#fff;box-shadow:0 1px 4px #0006}
 .pg canvas,.tp canvas{display:block;width:100%;height:100%}
+.find-text-layer{position:absolute;top:0;left:0;line-height:1;text-size-adjust:none;transform-origin:0 0;pointer-events:none}
+.find-text-layer span,.find-text-layer br{position:absolute;color:transparent;white-space:pre;transform-origin:0 0}
+.find-text-layer[data-main-rotation="90"]{transform:rotate(90deg) translateY(-100%)}
+.find-text-layer[data-main-rotation="180"]{transform:rotate(180deg) translate(-100%,-100%)}
+.find-text-layer[data-main-rotation="270"]{transform:rotate(270deg) translateX(-100%)}
+::highlight(pdf-find){background:#ffde477a;color:transparent}
+::highlight(pdf-find-current){background:#ff9100aa;color:transparent}
+.hiddenCanvasElement{position:absolute;top:0;left:0;width:0;height:0;display:none}
 /* tab strip over the page view: the board has none; head / panel / acc tokens */
 #tabs{flex:none;display:flex;overflow-x:auto;background:var(--head);border-bottom:1px solid var(--line)}
 .tab{flex:none;display:flex;align-items:center;max-width:220px;border-right:1px solid var(--line)}
