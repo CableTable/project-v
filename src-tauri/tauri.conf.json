@@ -3,7 +3,7 @@
   "productName": "Project V",
   "mainBinaryName": "ProjectV",
   "version": "0.1.0",
-  "identifier": "com.rakshith.projectv",
+  "identifier": "com.cabletable.projectv",
   "build": {
     "frontendDist": "../web"
   },
