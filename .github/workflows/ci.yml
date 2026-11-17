@@ -52,3 +52,8 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Test-Path src-tauri/target/release/ProjectV.exe)) { throw "ProjectV.exe missing" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ProjectV-exe
+          path: src-tauri/target/release/ProjectV.exe
+          retention-days: 14

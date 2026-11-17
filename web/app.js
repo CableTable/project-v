@@ -1,6 +1,7 @@
 // Opening: Ctrl+O dialog, drag-drop, launch / second-launch paths (T1). Tabs (T2b): one tab per open file, tabs.js holds the list, the page view is viewer.js.
 import { openPdf, show, closeDoc } from './viewer.js';
 import { emptyTabs, activeTab, findByKey, openTab, activate, closeTab, cycle, patchTab } from './tabs.js';
+import { createMergeWindow } from './merge-ui.js';
 
 const tauri = window.__TAURI__;
 const $ = (id) => document.getElementById(id);
@@ -52,18 +53,22 @@ const say = (text) => { notes.push(text); render(); };
 // Items are { key, name, title, read() -> bytes }: `key` is the path (a dropped file has none: name, size and date stand in). They open in order,
 // one after the other, each in its own tab. The file already open is switched to; a failure is said in its own tab and the rest still open.
 let queue = Promise.resolve();
-function openAll(items) {
+function openAll(items, replaceExisting = false) {
   queue = queue.then(async () => {
     notes = [];
-    for (const { key, name, title, read } of items) {
+    for (const item of items) {
+      const { key, name, read } = item;
       const have = findByKey(tabs, key);
-      if (have && !have.error) tabs = activate(tabs, have.id);
+      if (have && !have.error && !replaceExisting) tabs = activate(tabs, have.id);
       else {
-        if (have) tabs = closeTab(tabs, have.id); // it failed before: try again, in a new tab
+        if (have) {
+          tabs = closeTab(tabs, have.id);
+          if (have.doc) closeDoc(have.doc);
+        }
         let doc = null, error = null;
         try { doc = await openPdf(name, await read()); }
         catch (e) { error = e instanceof Error ? e.message : String(e); }
-        tabs = openTab(tabs, { key, name, title, doc, error });
+        tabs = openTab(tabs, { ...item, doc, error });
       }
       render();
     }
@@ -74,7 +79,7 @@ function openAll(items) {
 const fromPath = (path) => {
   const name = baseName(path);
   return {
-    key: path, name, title: path,
+    key: path, name, title: path, path,
     read: async () => {
       try { return await tauri.fs.readFile(path); }
       catch (e) { throw new Error(`${name}: ${/os error [23]\b|not found/i.test(e) ? 'file not found' : e}`); }
@@ -87,6 +92,10 @@ const fromFile = (file) => ({
   read: async () => new Uint8Array(await file.arrayBuffer()),
 });
 
+const merge = createMergeWindow({ tauri, fromPath, fromFile, openResult: (path) => openAll([fromPath(path)], true) });
+const openMerge = () => merge.open(activeTab(tabs));
+$('merge').onclick = openMerge;
+
 async function pickFile() {
   if (!tauri) return;
   const path = await tauri.dialog.open({ filters: [{ name: 'PDF', extensions: ['pdf'] }] }); // null when cancelled
@@ -97,13 +106,14 @@ document.addEventListener('keydown', (e) => {
   if (!e.ctrlKey || e.altKey) return;
   const k = e.key.toLowerCase(), now = activeTab(tabs);
   if (k === 'o' && !e.shiftKey) { e.preventDefault(); pickFile(); }
+  else if (k === 'm' && e.shiftKey) { e.preventDefault(); openMerge(); }
   else if (k === 'tab') { e.preventDefault(); tabs = cycle(tabs, e.shiftKey ? -1 : 1); render(); }
   else if (k === 'w' && !e.shiftKey) { e.preventDefault(); if (now) close(now.id); }
 });
 document.addEventListener('dragover', (e) => e.preventDefault()); // without this the drop is refused
 document.addEventListener('drop', (e) => {
   e.preventDefault();
-  openAll([...e.dataTransfer.files].map(fromFile));
+  if (!merge.drop(e)) openAll([...e.dataTransfer.files].map(fromFile));
 });
 
 // Launch / second-launch paths arrive from Rust (single-instance).
