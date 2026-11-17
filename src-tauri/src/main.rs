@@ -4,13 +4,19 @@
 mod launch;
 use std::{path::PathBuf, sync::Mutex};
 use tauri::{Emitter, Manager};
+use tauri_plugin_fs::FsExt;
 
 struct LaunchFiles(Mutex<Vec<PathBuf>>);
 
-/// The web takes the queued launch paths (T2 adds the fs scope grant when it reads them).
+/// The web takes the queued launch paths. Each one is added to the fs scope so the web can read exactly
+/// those files (the Open dialog does the same for the file picked); nothing else is readable.
 #[tauri::command]
-fn take_launch_files(files: tauri::State<LaunchFiles>) -> Vec<PathBuf> {
-    std::mem::take(&mut *files.0.lock().unwrap())
+fn take_launch_files(app: tauri::AppHandle, files: tauri::State<LaunchFiles>) -> Vec<PathBuf> {
+    let paths = std::mem::take(&mut *files.0.lock().unwrap());
+    for path in &paths {
+        let _ = app.fs_scope().allow_file(path); // a missing path stays out; the web reports it
+    }
+    paths
 }
 
 fn main() {
@@ -28,6 +34,8 @@ fn main() {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![take_launch_files])
         .run(tauri::generate_context!())
         .expect("error while running Project V");
