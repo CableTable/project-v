@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { closeSync, openSync } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -12,8 +13,10 @@ import { chromium } from 'playwright';
 const port = 9243;
 const endpoint = `http://127.0.0.1:${port}`;
 const appUrl = 'http://tauri.localhost/';
-const timeout = 15_000;
+// A cold hosted runner creates the WebView2 profile on first start: allow longer there.
+const timeout = process.env.GITHUB_ACTIONS === 'true' ? 60_000 : 15_000;
 const children = new Map();
+const logs = new Map();
 let root, browser;
 
 async function step(name, run) {
@@ -50,35 +53,72 @@ async function fixture(path, pages) {
   return path;
 }
 
+// The exe's stdout / stderr go to a file per launch (no pipe to drain, none held open by WebView2 children).
 async function launch(exe, pdf) {
-  const child = spawn(exe, [pdf], {
-    stdio: 'ignore',
-    env: {
-      ...process.env,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
-      WEBVIEW2_USER_DATA_FOLDER: root,
-      PROJECTV_TEST_DIR: root,
-    },
-  });
+  const log = join(root, `exe-${logs.size + 1}.log`);
+  const fd = openSync(log, 'a');
+  let child;
+  try {
+    child = spawn(exe, [pdf], {
+      stdio: ['ignore', fd, fd],
+      env: {
+        ...process.env,
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+        WEBVIEW2_USER_DATA_FOLDER: root,
+        PROJECTV_TEST_DIR: root,
+      },
+    });
+  } finally {
+    closeSync(fd);
+  }
+  logs.set(child, log);
   children.set(child, new Promise((done) => child.once('close', done)));
   await once(child, 'spawn');
   return child;
 }
 
+// WebView2 runtime version (documented EdgeUpdate "pv" value), or null when no runtime is installed.
+function webview2Version() {
+  const guid = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+  for (const key of [`HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\${guid}`,
+    `HKLM\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\${guid}`, `HKCU\\Software\\Microsoft\\EdgeUpdate\\Clients\\${guid}`]) {
+    const out = spawnSync('reg.exe', ['query', key, '/v', 'pv'], { encoding: 'utf8', windowsHide: true });
+    const version = out.status === 0 && /pv\s+REG_SZ\s+(\S+)/.exec(out.stdout)?.[1];
+    if (version && version !== '0.0.0.0') return version;
+  }
+  return null;
+}
+
+// Why the window never came up, so the next red says it: exit code, exe output, runtime, port, WebView2 processes.
+async function attachError(child, message) {
+  const version = webview2Version();
+  const listening = await checkPort().then(() => 'closed', (e) => /busy/.test(e.message) ? 'listening' : e.message);
+  const tasks = spawnSync('tasklist.exe', ['/FI', 'IMAGENAME eq msedgewebview2.exe', '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
+  const webviews = (tasks.stdout ?? '').split(/\r?\n/).filter((line) => /^"msedgewebview2\.exe"/i.test(line)).length;
+  const output = (await readFile(logs.get(child), 'utf8').catch(() => '')).split(/\r?\n/).filter(Boolean).slice(-20);
+  const error = new Error([
+    message,
+    `ProjectV.exe exit code: ${child.exitCode}, signal: ${child.signalCode}`,
+    `WebView2 runtime: ${version ?? 'NOT INSTALLED'}; msedgewebview2.exe processes: ${webviews}; port ${port}: ${listening}`,
+    `ProjectV.exe output (last 20 lines):${output.length ? `\n${output.join('\n')}` : ' (none)'}`,
+  ].join('\n'));
+  error.webview2Missing = version === null;
+  return error;
+}
+
 async function attach(child) {
   const deadline = performance.now() + timeout;
   let lastError;
-  for (let remaining = timeout; remaining > 0; remaining = deadline - performance.now()) {
-    assert.equal(child.exitCode, null, 'ProjectV.exe exited before CDP attached');
-    assert.equal(child.signalCode, null, 'ProjectV.exe was killed before CDP attached');
+  while (performance.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) throw await attachError(child, 'ProjectV.exe exited before CDP attached');
     try {
-      return await chromium.connectOverCDP(endpoint, { timeout: Math.min(1000, remaining) });
+      return await chromium.connectOverCDP(endpoint, { timeout: 1000 });
     } catch (error) {
       lastError = error;
-      await delay(Math.min(100, Math.max(0, deadline - performance.now())));
+      await delay(100);
     }
   }
-  throw new Error(`CDP did not attach within ${timeout / 1000} s: ${lastError.message}`);
+  throw await attachError(child, `CDP did not attach within ${timeout / 1000} s: ${lastError.message}`);
 }
 
 async function rendered(page, number) {
@@ -218,7 +258,9 @@ try {
   });
 } catch (error) {
   console.error(error.message);
-  process.exitCode = 1;
+  // The only skip: a CI runner with no WebView2 runtime at all (registry says so); every other failure stays red.
+  if (error.webview2Missing && process.env.GITHUB_ACTIONS === 'true') console.log('SKIP real window: WebView2 runtime is not installed on this runner');
+  else process.exitCode = 1;
 } finally {
   if (root) {
     try {
