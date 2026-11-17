@@ -1,0 +1,6 @@
+#!/bin/sh
+# On once per clone: git config core.hooksPath tools/hooks (rook.mjs folders does it).
+files=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.test\.mjs$')
+[ -z "$files" ] && exit 0
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX # TODO 219e2g: tests' scratch repos hit the real repo
+exec node --test --test-timeout=120000 $files
