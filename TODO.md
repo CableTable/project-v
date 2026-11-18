@@ -11,3 +11,4 @@
 | T5 | Merge page mode (per-page merge view) + bookmarks preserve / generate (grill-V-T5.md Q1-Q6 + Round 2) | done 5464643 |
 | T7 | Zoom / pan lag on large PDFs + horizontal wheel (MX Master 3S) (grill-V-T7.md Q1-Q5 + Round 2 F1-F7) | done 833de0e (window-test --pdf: zoom step 15.9/17.1 ms, pan 16.7/18.0 ms, PASS horizontal wheel; real MX wheel unchecked) |
 | T8 | Own app icon, not Project D's | done f091bae + 8334e3c (tauri icon regen) |
+| T9 | CI flake: window-test "merge pages" one-shot isDisabled (CI 44236608559 attempt 1); retry waits for UI state (grill rook-hq/runs49/grill-V-T9.md) | done (King c03c350; local window-test 12 PASS, 0 FAIL) |
