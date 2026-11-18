@@ -12,6 +12,10 @@ export function makeDoc(name, sizes) {
 export const clampZoom = (z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 export const zoomBy = (z, factor) => clampZoom(z * factor);
 
+export function zoomPaint(zoom, pixelRatio, changedAt, now) {
+  return { delay: Math.max(0, changedAt + 200 - now), scale: zoom * PX_PER_PT * pixelRatio };
+}
+
 /** Fit width / Fit page: the zoom at which `page` fills a viewW × viewH view inside the padding. */
 export const fitWidthZoom = (page, viewW) => clampZoom((viewW - 2 * PAD) / (page.w * PX_PER_PT));
 export const fitPageZoom = (page, viewW, viewH) => Math.min(fitWidthZoom(page, viewW), clampZoom((viewH - 2 * PAD) / (page.h * PX_PER_PT)));

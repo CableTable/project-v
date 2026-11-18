@@ -1,6 +1,6 @@
 // viewer.js — the page view: continuous scroll that renders only the pages in view + 1 (Q4), zoom, Fit, page box, thumbnails.
 // A document is one handle (model, pdf.js document, zoom, scroll, what is rendered); a tab (tabs.js) holds one. `cur` is the one on screen.
-import { makeDoc, layout, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, canvasScale, PX_PER_PT, GAP, PAD } from './doc.js';
+import { makeDoc, layout, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, zoomPaint, canvasScale, PX_PER_PT, GAP, PAD } from './doc.js';
 import { rangesForHits, textNodes } from './find-layer.js';
 import { buildPageLists, THUMB_W } from './page-lists.js';
 
@@ -11,7 +11,7 @@ const $ = (id) => document.getElementById(id);
 const view = $('view'), pages = $('pages'), thumbs = $('thumbs'), pageBox = $('page');
 const dpr = () => Math.min(window.devicePixelRatio || 1, 2); // 2x sharpness is enough; more costs memory per canvas
 
-let cur = null, side = true, queued = false;
+let cur = null, side = true, queued = false, wheelFallback = null;
 pages.style.setProperty('--gap', GAP + 'px');
 pages.style.setProperty('--pad', PAD + 'px');
 thumbs.style.setProperty('--tw', THUMB_W + 'px');
@@ -36,7 +36,7 @@ export async function openPdf(name, bytes) {
     sizes = Array.from({ length: pdf.numPages }, () => first);
     doc = makeDoc(name, sizes);
   } catch (e) { pdf.destroy(); throw new Error(`${name}: damaged PDF (${e?.message || e})`); }
-  const t = { pdf, doc, zoom: 1, fit: null, lay: layout(doc, 1), live: new Map(), liveThumbs: new Map(), slots: [], thumbEls: [], sel: -1, closed: false, io: null, scrollTop: 0, scrollLeft: 0,
+  const t = { pdf, doc, zoom: 1, fit: null, lay: layout(doc, 1), live: new Map(), liveThumbs: new Map(), slots: [], thumbEls: [], sel: -1, closed: false, io: null, scrollTop: 0, scrollLeft: 0, changedAt: -Infinity, repaintTimer: null,
     TextLayer: pdfjs.TextLayer, find: { open: false, query: '', result: null, reveal: null } };
   build(t);
   sizeSlots(t);
@@ -48,6 +48,8 @@ export async function openPdf(name, bytes) {
 export function show(t) {
   if (t === cur) return;
   if (cur) {
+    clearTimeout(cur.repaintTimer);
+    cur.repaintTimer = null;
     cur.scrollTop = view.scrollTop;
     cur.scrollLeft = view.scrollLeft;
     for (const i of [...cur.live.keys()]) drop(cur.live, i, cur.slots[i]);
@@ -55,6 +57,7 @@ export function show(t) {
   cur = t;
   if (!t) return showEmpty();
   pages.replaceChildren(...t.slots);
+  pages.style.setProperty('--scale-factor', t.zoom * PX_PER_PT);
   thumbs.replaceChildren(...t.thumbEls);
   $('empty').hidden = true;
   view.hidden = false;
@@ -63,7 +66,7 @@ export function show(t) {
   view.scrollTop = t.scrollTop;
   view.scrollLeft = t.scrollLeft;
   t.fit ? applyFit() : update();
-  if (t.find.reveal) revealFindHit(t.find.reveal);
+  revealFindHit(t.find.reveal);
   if (side) thumbs.children[t.sel]?.scrollIntoView({ block: 'nearest' });
 }
 
@@ -89,9 +92,12 @@ async function readSizes(t, sizes, pageSize) {
     for (const i of changed) {
       const box = t.thumbEls[i].firstChild;
       box.style.height = (THUMB_W * sizes[i].h) / sizes[i].w + 'px';
-      cancelPaint(t.live.get(i));
-      t.live.delete(i); // drawn at the old shape: update() draws it again
-      if (t.liveThumbs.has(i)) paint(t, t.liveThumbs, i, box, (THUMB_W / sizes[i].w) * dpr());
+      const rec = t.live.get(i);
+      if (rec) {
+        cancelPaint(rec);
+        rec.scale = null; // keep the drawn page until its replacement is ready
+      }
+      if (t.liveThumbs.has(i)) paintThumbnail(t, i, box);
     }
     if (t === cur) t.fit ? applyFit() : setZoom(t.zoom);
     else { t.lay = layout(t.doc, t.zoom); sizeSlots(t); } // off screen: a Fit zoom is worked out again by show()
@@ -101,6 +107,7 @@ async function readSizes(t, sizes, pageSize) {
 /** Frees a handle: its pdf.js document and renders are destroyed. The tab's owner drops the handle afterwards. */
 export function closeDoc(t) {
   t.closed = true;
+  clearTimeout(t.repaintTimer);
   t.io.disconnect();
   for (const rec of [...t.live.values(), ...t.liveThumbs.values()]) cancelPaint(rec);
   t.live.clear();
@@ -114,37 +121,52 @@ function build(t) {
     for (const { target, isIntersecting } of entries) {
       const i = +target.dataset.i;
       if (!isIntersecting) { drop(t.liveThumbs, i, target); continue; }
-      if (!t.liveThumbs.has(i)) paint(t, t.liveThumbs, i, target, (THUMB_W / t.doc.pages[i].w) * dpr());
+      if (!t.liveThumbs.has(i)) paintThumbnail(t, i, target);
     }
   }, { root: thumbs, rootMargin: '200px' });
   Object.assign(t, buildPageLists(t.doc, goto, (box) => t.io.observe(box)));
 }
 
-/** Renders page i into `slot` (a canvas) unless it is already there at this scale; `live` tracks what is on screen. */
+function paintThumbnail(t, i, slot) {
+  const { w, h } = t.doc.pages[i];
+  paint(t, t.liveThumbs, i, slot, canvasScale(w, h, (THUMB_W / w) * dpr()));
+}
+
+/** Keeps the drawn canvas and text layer in place until the replacement is ready. */
 async function paint(t, live, i, slot, scale) {
-  cancelPaint(live.get(i));
-  const rec = { scale, task: null };
+  const rec = live.get(i) ?? {};
+  cancelPending(rec);
+  const render = rec.pending = { scale, task: null };
   live.set(i, rec);
+  const active = () => live.get(i) === rec && rec.pending === render;
   try {
     const page = await t.pdf.getPage(i + 1);
-    if (live.get(i) !== rec) return;
-    const p = t.doc.pages[i], vp = page.getViewport({ scale: canvasScale(p.w, p.h, scale) }), canvas = document.createElement('canvas');
+    if (!active()) return;
+    const vp = page.getViewport({ scale }), canvas = document.createElement('canvas');
     canvas.width = Math.ceil(vp.width);
     canvas.height = Math.ceil(vp.height);
-    rec.task = page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
-    await rec.task.promise;
-    if (live.get(i) !== rec) return;
-    slot.replaceChildren(canvas); // the old canvas stays (stretched) until the new one is ready
-    if (live === t.live) {
-      rec.page = page;
-      refreshFind();
-    }
+    render.task = page.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
+    await render.task.promise;
+    if (!active()) return;
+    rec.layer?.cancel();
+    live.set(i, { scale, page });
+    slot.replaceChildren(canvas);
+    if (live === t.live) refreshFind();
   } catch (e) {
-    if (live.get(i) === rec) live.delete(i);
+    if (active()) {
+      rec.pending = null;
+      if (!rec.page) live.delete(i);
+    }
     if (e?.name !== 'RenderingCancelledException' && !t.closed) console.warn('render page', i + 1, e);
   }
 }
-function cancelPaint(rec) { rec?.task?.cancel(); rec?.layer?.cancel(); }
+function cancelPending(rec) {
+  const pending = rec?.pending;
+  if (!pending) return;
+  rec.pending = null;
+  pending.task?.cancel();
+}
+function cancelPaint(rec) { cancelPending(rec); rec?.layer?.cancel(); }
 function drop(live, i, slot) { cancelPaint(live.get(i)); live.delete(i); slot.replaceChildren(); }
 
 async function paintFindLayer(t, rec, i) {
@@ -156,7 +178,6 @@ async function paintFindLayer(t, rec, i) {
     const container = document.createElement('div');
     container.className = 'find-text-layer';
     container.setAttribute('aria-hidden', 'true');
-    container.style.setProperty('--scale-factor', viewport.scale);
     rec.layer = new t.TextLayer({ container, viewport, textContentSource: content });
     await rec.layer.render();
     if (t.live.get(i) !== rec) return;
@@ -222,7 +243,7 @@ export function revealFindHit(hit) {
   cur.find.reveal = hit;
   if (hit) {
     const slot = cur.slots[hit.page].getBoundingClientRect(), box = view.getBoundingClientRect();
-    if (slot.bottom <= box.top || slot.top >= box.bottom) { goto(hit.page); update(); return; }
+    if (slot.bottom <= box.top || slot.top >= box.bottom) { goto(hit.page); update(); }
   }
   refreshFind();
 }
@@ -233,33 +254,59 @@ function sizeSlots(t) {
 }
 
 /** Draws what is in view + 1 each side, frees the rest, updates the page box. */
-function update() {
+function update(defer = false) {
   const t = cur;
   if (!t) return;
-  const [first, last] = visibleRange(t.lay, view.scrollTop, view.clientHeight), scale = t.zoom * PX_PER_PT * dpr();
-  for (const i of [...t.live.keys()]) if (i < first || i > last) drop(t.live, i, t.slots[i]);
-  for (let i = first; i <= last; i++) if (t.live.get(i)?.scale !== scale) paint(t, t.live, i, t.slots[i], scale);
-  const n = currentPage(t.lay, view.scrollTop, view.clientHeight);
-  if (document.activeElement !== pageBox) pageBox.value = n + 1;
+  const now = performance.now();
+  if (defer) {
+    t.changedAt = now;
+    clearTimeout(t.repaintTimer);
+    t.repaintTimer = null;
+  }
+  const { delay, scale } = zoomPaint(t.zoom, dpr(), t.changedAt, now);
+  if (delay && t.repaintTimer === null) t.repaintTimer = setTimeout(() => {
+    t.repaintTimer = null;
+    if (cur === t) update();
+  }, delay);
+
+  const { scrollTop, clientHeight } = view;
+  const [first, last] = visibleRange(t.lay, scrollTop, clientHeight);
+  let dropped = false;
+  for (const i of t.live.keys()) {
+    if (i >= first && i <= last) continue;
+    drop(t.live, i, t.slots[i]);
+    dropped = true;
+  }
+  for (let i = first; i <= last; i++) {
+    const { w, h } = t.doc.pages[i], target = canvasScale(w, h, scale), rec = t.live.get(i);
+    if (rec?.pending && rec.pending.scale !== target) cancelPending(rec);
+    if (!delay && rec?.scale !== target && rec?.pending?.scale !== target) paint(t, t.live, i, t.slots[i], target);
+  }
+  const n = currentPage(t.lay, scrollTop, clientHeight);
+  if (document.activeElement !== pageBox && pageBox.value !== String(n + 1)) pageBox.value = n + 1;
   if (t.sel !== n) {
     t.thumbEls[t.sel]?.classList.remove('sel');
     t.thumbEls[n].classList.add('sel');
     if (side) t.thumbEls[n].scrollIntoView({ block: 'nearest' });
     t.sel = n;
   }
-  refreshFind();
+  if (dropped) refreshFind();
 }
 
 /** Zoom to z keeping the view point (cx, cy) (px in the view) on the same spot of the same page. */
 function setZoom(z, cx = view.clientWidth / 2, cy = view.clientHeight / 2) {
-  const t = cur, a = anchorAt(t.lay, view.scrollTop + cy), r = z / t.zoom;
+  const t = cur, a = anchorAt(t.lay, view.scrollTop + cy);
+  const slot = t.slots[a.i], before = slot.getBoundingClientRect();
+  const x = view.getBoundingClientRect().left + cx, fraction = (x - before.left) / before.width;
   t.zoom = z;
   t.lay = layout(t.doc, z);
   sizeSlots(t);
+  pages.style.setProperty('--scale-factor', z * PX_PER_PT);
+  const after = slot.getBoundingClientRect();
   view.scrollTop = yOfAnchor(t.lay, a) - cy;
-  view.scrollLeft = (view.scrollLeft + cx) * r - cx;
+  view.scrollLeft += after.left + after.width * fraction - x;
   $('zoom').textContent = Math.round(z * 100) + '%';
-  update();
+  update(true);
 }
 
 function zoomStep(factor, cx, cy) {
@@ -324,9 +371,35 @@ document.addEventListener('wheel', (e) => {
   const r = view.getBoundingClientRect();
   zoomStep(e.deltaY < 0 ? WHEEL_ZOOM : 1 / WHEEL_ZOOM, e.clientX - r.left, e.clientY - r.top);
 }, { passive: false });
+function scrollWheel(e, distance) {
+  const left = view.scrollLeft;
+  view.scrollLeft += distance;
+  if (view.scrollLeft !== left) e.preventDefault();
+}
+view.addEventListener('wheel', (e) => {
+  if (!cur || e.ctrlKey || e.defaultPrevented) return;
+  const { deltaMode, deltaX, deltaY, shiftKey } = e;
+  const dx = deltaX || (shiftKey ? deltaY : 0);
+  if (!dx) return;
+  const distance = dx * (deltaMode === 1 ? 16 : deltaMode === 2 ? view.clientWidth : 1);
+  if (!shiftKey && !deltaY) return scrollWheel(e, distance);
+
+  const t = cur, left = view.scrollLeft;
+  if (wheelFallback?.t === t && wheelFallback.left === left) {
+    wheelFallback.events.push([e, distance]);
+    return;
+  }
+  const fallback = wheelFallback = { t, left, events: [[e, distance]] };
+  // Chromium can apply native wheel scrolling after the first frame callback.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (wheelFallback === fallback) wheelFallback = null;
+    if (cur !== t || view.scrollLeft !== left) return;
+    for (const [event, dx] of fallback.events) scrollWheel(event, dx);
+  }));
+}, { passive: false });
 view.addEventListener('scroll', () => {
   if (queued) return;
   queued = true;
   requestAnimationFrame(() => { queued = false; update(); });
 });
-new ResizeObserver(() => { if (cur) cur.fit ? applyFit() : update(); }).observe(view);
+new ResizeObserver(() => { if (cur) cur.fit ? applyFit() : update(true); }).observe(view);

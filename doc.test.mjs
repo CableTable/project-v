@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeDoc, layout, pageAt, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, clampZoom, canvasScale, MAX_CANVAS_PIXELS, MAX_CANVAS_SIDE, PX_PER_PT, MIN_ZOOM, MAX_ZOOM, GAP, PAD } from './web/doc.js';
+import { makeDoc, layout, pageAt, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, clampZoom, zoomPaint, canvasScale, MAX_CANVAS_PIXELS, MAX_CANVAS_SIDE, PX_PER_PT, MIN_ZOOM, MAX_ZOOM, GAP, PAD } from './web/doc.js';
 
 const letter = { w: 612, h: 792 };
 const doc = (n, size = letter) => makeDoc('t.pdf', Array.from({ length: n }, () => size));
@@ -44,6 +44,14 @@ test('zoom: clamped to MIN..MAX, multiplicative', () => {
   assert.equal(zoomBy(MIN_ZOOM, 0.5), MIN_ZOOM);
   assert.equal(clampZoom(-3), MIN_ZOOM);
   assert.equal(clampZoom(99), MAX_ZOOM);
+});
+
+test('zoom paint waits 200 ms from the latest change and uses its scale', () => {
+  assert.deepEqual(zoomPaint(1, 2, -Infinity, 100), { delay: 0, scale: PX_PER_PT * 2 });
+  assert.deepEqual(zoomPaint(1.25, 2, 100, 100), { delay: 200, scale: 1.25 * PX_PER_PT * 2 });
+  assert.deepEqual(zoomPaint(1.5, 2, 250, 300), { delay: 150, scale: 1.5 * PX_PER_PT * 2 });
+  assert.equal(zoomPaint(1.5, 2, 250, 449).delay, 1);
+  assert.deepEqual(zoomPaint(1.5, 2, 250, 450), { delay: 0, scale: 1.5 * PX_PER_PT * 2 });
 });
 
 test('Fit width / Fit page: the page fills the view inside the padding', () => {

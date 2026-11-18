@@ -133,6 +133,46 @@ async function rendered(page, number) {
   }, number);
 }
 
+async function viewerTimings(page) {
+  const samples = await page.locator('#view').evaluate(async (view) => {
+    const frame = () => new Promise((done) => requestAnimationFrame(done));
+    const settle = () => new Promise((done) => setTimeout(done, 650));
+    const zoom = (deltaY) => {
+      const { left, top } = view.getBoundingClientRect();
+      view.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true, cancelable: true, ctrlKey: true, deltaY, clientX: left + 500, clientY: top + 280,
+      }));
+    };
+    const measure = async (count, action, after) => {
+      const times = [];
+      await frame();
+      for (let i = 0; i < count; i++) {
+        const start = performance.now();
+        action(i);
+        await frame();
+        await frame();
+        times.push(performance.now() - start);
+        if (after) { await after(); await frame(); }
+      }
+      return times.sort((a, b) => a - b);
+    };
+    const pan = (dx, dy) => { view.scrollLeft += dx; view.scrollTop += dy; };
+    await settle();
+    const steps = await measure(12, (i) => zoom(i % 2 ? 100 : -100), settle);
+    const mixed = await measure(36, (i) => {
+      if (i % 6 === 0) zoom(i % 12 ? 100 : -100);
+      pan(i % 2 ? -80 : 80, i % 2 ? -80 : 80);
+    });
+    for (let i = 0; i < 12; i++) zoom(-100);
+    await settle();
+    const scroll = await measure(36, (i) => pan(i % 18 < 9 ? 420 : -420, i % 18 < 9 ? 240 : -240));
+    return [['Zoom step', steps], ['Pan between zoom steps', mixed], ['Pan at settled zoom', scroll]];
+  });
+  for (const [label, times] of samples) {
+    console.log(`${label} (two frames, median/p95): ${times[Math.floor(times.length / 2)].toFixed(1)}/${times[Math.ceil(times.length * 0.95) - 1].toFixed(1)} ms`);
+  }
+}
+
 async function checkMerged(path, pages) {
   if (process.env.GITHUB_ACTIONS !== 'true') {
     const where = spawnSync('where.exe', ['qpdf.exe'], { encoding: 'utf8', windowsHide: true });
@@ -154,16 +194,23 @@ async function checkMerged(path, pages) {
 const timing = (name, start) => console.log(`${name}: ${Math.round(performance.now() - start)} ms`);
 
 try {
-  const exe = await step('preflight', async () => {
-    assert(process.argv[2], 'usage: node tools/window-test.mjs <exe>');
+  const { exe, timingPdf } = await step('preflight', async () => {
+    const flags = process.argv.slice(3);
+    assert(process.argv[2] && (!flags.length || (flags.length === 2 && flags[0] === '--pdf' && flags[1])),
+      'usage: node tools/window-test.mjs <exe> [--pdf <path>]');
     const path = resolve(process.argv[2]);
+    const timingPdf = flags.length ? resolve(flags[1]) : null;
     await access(path);
+    if (timingPdf) {
+      assert(process.env.GITHUB_ACTIONS !== 'true', '--pdf is for local timing runs');
+      await access(timingPdf);
+    }
     const running = execFileSync('tasklist.exe', ['/FI', 'IMAGENAME eq ProjectV.exe', '/FO', 'CSV', '/NH'], {
       encoding: 'utf8', windowsHide: true,
     });
     assert(!/^"ProjectV\.exe",/im.test(running), 'close ProjectV.exe first');
     await checkPort();
-    return path;
+    return { exe: path, timingPdf };
   });
 
   const [first, second, large] = await step('generate PDF fixtures', async () => {
@@ -295,6 +342,27 @@ try {
     await rendered(page, 1000);
     assert.equal(await pageNumber.inputValue(), '1000');
     timing('Scroll to page 1000', start);
+  });
+
+  await step('horizontal wheel', async () => {
+    const view = page.locator('#view');
+    const max = await view.evaluate((el) => {
+      for (let i = 0; i < 8; i++) document.querySelector('#zin').click();
+      el.scrollLeft = 0;
+      return el.scrollWidth - el.clientWidth;
+    });
+    assert(max >= 128, 'zoomed page must overflow horizontally');
+    await view.dispatchEvent('wheel', { deltaX: 80, cancelable: true, bubbles: true });
+    await page.waitForFunction(() => document.querySelector('#view').scrollLeft === 80);
+    await view.dispatchEvent('wheel', { deltaY: 3, deltaMode: 1, shiftKey: true, cancelable: true, bubbles: true });
+    await page.waitForFunction(() => document.querySelector('#view').scrollLeft === 128);
+  });
+
+  if (timingPdf) await step('time viewer with --pdf', async () => {
+    await launch(exe, timingPdf);
+    await page.getByRole('tab', { selected: true }).getByText(basename(timingPdf), { exact: true }).waitFor();
+    await page.locator('.pg canvas').first().waitFor();
+    await viewerTimings(page);
   });
 } catch (error) {
   console.error(error.message);
