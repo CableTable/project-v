@@ -30,6 +30,21 @@ async function step(name, run) {
   }
 }
 
+// UI state follows a click / key press after an async re-render: retry the check ~5 s instead of reading it once (T9).
+async function until(what, check, ms = 5000) {
+  const deadline = performance.now() + ms;
+  let last;
+  do {
+    try {
+      if (await check()) return;
+    } catch (error) {
+      last = error;
+    }
+    await delay(50);
+  } while (performance.now() < deadline);
+  throw new Error(`timed out after ${ms} ms waiting for ${what}${last ? `: ${last.message}` : ''}`);
+}
+
 function checkPort() {
   return new Promise((done, fail) => {
     const socket = createConnection({ host: '127.0.0.1', port });
@@ -248,7 +263,7 @@ try {
     await page.keyboard.press('Control+f');
     const query = page.locator('#find-query');
     await query.waitFor();
-    assert(await query.evaluate((input) => input === document.activeElement));
+    await until('#find-query focused', () => query.evaluate((input) => input === document.activeElement));
     await query.fill('lorem');
     await page.locator('#find-status').filter({ hasText: /^[1-9]\d* of [1-9]\d*$/ }).waitFor();
     await query.press('Escape');
@@ -272,7 +287,10 @@ try {
     await dialog.getByRole('button', { name: 'Clear all' }).click();
     await dialog.getByRole('button', { name: 'Add files' }).click();
     await dialog.getByText(basename(second), { exact: true }).waitFor();
-    assert.deepEqual(await dialog.locator('ol li strong').allTextContents(), [basename(first), basename(second)]);
+    await until('merge list is first, second', async () => {
+      assert.deepEqual(await dialog.locator('ol li strong').allTextContents(), [basename(first), basename(second)]);
+      return true;
+    });
     await dialog.getByRole('button', { name: 'Merge', exact: true }).click();
     await dialog.waitFor({ state: 'hidden' });
     await checkMerged(join(root, 'out', 'merged.pdf'), 1 + 2);
@@ -290,15 +308,15 @@ try {
     await removed.press('Control+ArrowLeft');
     await dialog.getByRole('button', { name: 'Files', exact: true }).click();
     const range = dialog.getByRole('textbox', { name: `Page range for ${basename(second)}` });
-    assert(await range.isDisabled());
+    await until('page range disabled after removing a page', () => range.isDisabled());
     await dialog.getByRole('button', { name: 'Reset page order' }).click();
-    assert(await range.isEnabled());
+    await until('page range enabled after Reset page order', () => range.isEnabled());
     await dialog.getByRole('button', { name: 'Pages', exact: true }).click();
     await removed.press('Delete');
     const rotated = grid.getByRole('listitem', { name: `${basename(second)} p2` });
     await rotated.getByRole('button', { name: /Rotate/ }).click();
     await dialog.getByRole('button', { name: 'Files', exact: true }).click();
-    assert.equal(await range.inputValue(), '2');
+    await until("page range value '2'", async () => await range.inputValue() === '2');
     await dialog.getByRole('button', { name: 'Merge', exact: true }).click();
     await dialog.waitFor({ state: 'hidden' });
     const target = join(root, 'out', 'merged.pdf');
@@ -318,7 +336,7 @@ try {
     const start = performance.now();
     await launch(exe, large);
     await page.getByRole('tab', { selected: true }).getByText(basename(large), { exact: true }).waitFor();
-    assert.equal(await page.locator('#count').textContent(), '1000');
+    await until("#count is '1000'", async () => await page.locator('#count').textContent() === '1000');
     await rendered(page, 1);
     timing('1000-page open', start);
 
@@ -329,7 +347,7 @@ try {
     const grid = dialog.getByRole('list', { name: 'Pages in merge order' });
     await grid.locator('canvas').first().waitFor();
     timing('1000-page Pages view to first thumbnail', pagesStart);
-    assert.equal(await grid.getByRole('listitem').count(), 1000);
+    await until('1000 page items', async () => await grid.getByRole('listitem').count() === 1000);
     assert(await grid.locator('canvas').count() < 1000);
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   });
@@ -340,7 +358,7 @@ try {
     await pageNumber.fill('1000');
     await pageNumber.press('Enter');
     await rendered(page, 1000);
-    assert.equal(await pageNumber.inputValue(), '1000');
+    await until("#page value '1000'", async () => await pageNumber.inputValue() === '1000');
     timing('Scroll to page 1000', start);
   });
 
