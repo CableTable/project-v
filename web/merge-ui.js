@@ -1,4 +1,7 @@
-import { addFiles, clearFiles, mergePdfs, moveDown, moveFile, moveUp, removeFile, sortFiles } from './merge.js';
+import {
+  addFiles, clearFiles, displacedFiles, expandPages, loadMergePdf, mergePdfs, moveDown, moveFile,
+  moveUp, pageRange, pagesByFile, removeFile, replacePageRange, rotatePage, setFilePages, sortFiles,
+} from './merge.js';
 
 const filters = [{ name: 'PDF', extensions: ['pdf'] }];
 const el = (tag, text = '') => Object.assign(document.createElement(tag), { textContent: text });
@@ -10,54 +13,52 @@ function sizeLabel(bytes) {
   return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 }
 
-async function read(file) {
-  try { return await file.read(); }
-  catch (cause) {
-    const message = `${file.name}: could not read file.`;
-    file.error.textContent = message;
-    throw new Error(message, { cause });
+function clearThumb(thumb) {
+  const { job } = thumb;
+  if (!job) return;
+  thumb.job = null;
+  job.render?.cancel();
+  if (job.canvas) job.canvas.width = job.canvas.height = 0;
+  thumb.box.replaceChildren();
+}
+
+async function paintThumb(thumb) {
+  const { file, pageIndex, rotate, box } = thumb;
+  const job = {};
+  thumb.job = job;
+  try {
+    const page = await file.pdf.getPage(pageIndex + 1);
+    if (thumb.job !== job) return;
+    const rotation = (page.rotate + rotate) % 360;
+    const { width, height } = page.getViewport({ scale: 1, rotation });
+    const viewport = page.getViewport({ scale: Math.min(72 / width, 88 / height), rotation });
+    const canvas = job.canvas = el('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    job.render = page.render({ canvasContext: canvas.getContext('2d'), viewport });
+    await job.render.promise;
+    job.render = null;
+    if (thumb.job === job) box.replaceChildren(canvas);
+  } catch {
+    if (thumb.job === job) box.textContent = 'Preview unavailable';
+  } finally {
+    if (thumb.job !== job && job.canvas) job.canvas.width = job.canvas.height = 0;
   }
 }
 
-async function preview(file, isListed) {
-  let task;
-  try {
-    const bytes = await read(file);
-    if (!isListed()) return;
-    file.info.textContent = sizeLabel(bytes.byteLength);
-    const pdfjs = await import('./vendor/pdfjs/pdf.min.mjs');
-    if (!isListed()) return;
-    pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdfjs/pdf.worker.min.mjs', import.meta.url).href;
-    task = pdfjs.getDocument({ data: bytes, stopAtErrors: true });
-    const pdf = await task.promise;
-    if (!isListed()) return;
-    file.info.textContent += ` · ${pdf.numPages} ${pdf.numPages === 1 ? 'page' : 'pages'}`;
-    const page = await pdf.getPage(1);
-    const { width, height } = page.getViewport({ scale: 1 });
-    const viewport = page.getViewport({ scale: Math.min(72 / width, 88 / height) });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-    file.thumb.replaceChildren(canvas);
-  } catch (error) {
-    if (!task) {
-      file.info.textContent = '';
-      file.error.textContent ||= `${file.name}: ${error?.message || error}`;
-    } else {
-      const reason = error?.name === 'PasswordException' ? 'password-protected PDF' : 'invalid or damaged PDF';
-      file.error.textContent = `${file.name}: ${reason}.`;
-    }
-  } finally {
-    await task?.destroy().catch(console.warn);
-  }
+function checkbox(text) {
+  const label = el('label');
+  const input = Object.assign(el('input'), { type: 'checkbox', checked: true });
+  label.append(input, document.createTextNode(text));
+  return { label, input };
 }
 
 export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
   const style = Object.assign(el('link'), { rel: 'stylesheet', href: new URL('./merge.css', import.meta.url).href });
   document.head.append(style);
 
-  let list = clearFiles(), busy = false, dragged = null, previews = Promise.resolve();
+  let list = clearFiles(), pages = [], pageMode = false, busy = false, dragged = null, color = 0;
+  let displaced = new Set();
   const dialog = el('dialog');
   dialog.id = 'merge-dialog';
   dialog.setAttribute('aria-labelledby', 'merge-title');
@@ -74,54 +75,253 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
   const clearButton = button('Clear all', () => { setList(clearFiles()); pickButton.focus(); });
   const az = button('Sort A–Z', () => setList(sortFiles(list)));
   const za = button('Sort Z–A', () => setList(sortFiles(list, true)));
-  toolbar.append(pickButton, clearButton, az, za);
+  const views = el('div');
+  views.className = 'merge-views';
+  views.setAttribute('role', 'group');
+  views.setAttribute('aria-label', 'Merge view');
+  const filesView = button('Files', () => setView(false));
+  const pagesView = button('Pages', () => setView(true));
+  views.append(filesView, pagesView);
+  toolbar.append(pickButton, clearButton, az, za, views);
+
+  const customOrder = el('div', 'Custom page order (set in Pages)');
+  customOrder.className = 'merge-order';
+  const reset = button('Reset page order', () => setPages(inFileOrder()));
+  customOrder.append(reset);
 
   const hint = el('p', 'Drop PDF files here');
   hint.className = 'merge-hint';
   const cards = el('ol');
   cards.setAttribute('aria-label', 'PDFs in merge order');
+  const grid = el('ol');
+  grid.className = 'merge-pages';
+  grid.setAttribute('aria-label', 'Pages in merge order');
+  const options = el('div');
+  options.className = 'merge-options';
+  const perFile = checkbox('Bookmark per file');
+  const keep = checkbox("Keep files' bookmarks");
+  options.append(perFile.label, keep.label);
   const status = el('p');
   status.setAttribute('role', 'status');
   const mergeButton = button('Merge', save);
   mergeButton.className = 'acc';
   const footer = el('footer');
   footer.append(status, mergeButton);
-  dialog.append(header, toolbar, hint, cards, footer);
+  dialog.append(header, toolbar, customOrder, hint, cards, grid, options, footer);
   document.body.append(dialog);
+
+  const tiles = new Map(), thumbs = new Map();
+  const observer = new IntersectionObserver((entries) => {
+    for (const { target, isIntersecting } of entries) {
+      const thumb = thumbs.get(target);
+      if (!thumb) continue;
+      if (!isIntersecting) clearThumb(thumb);
+      else if (!thumb.job) paintThumb(thumb);
+    }
+  }, { root: dialog });
+
+  function observeThumb(thumb) {
+    thumbs.set(thumb.box, thumb);
+    observer.observe(thumb.box);
+  }
+
+  function releaseThumb(box) {
+    const thumb = thumbs.get(box);
+    if (thumb) clearThumb(thumb);
+    observer.unobserve(box);
+    thumbs.delete(box);
+  }
 
   function updateControls() {
     closeButton.disabled = busy;
     pickButton.disabled = busy || !tauri;
     clearButton.disabled = busy || !list.length;
-    az.disabled = za.disabled = busy || list.length < 2;
-    mergeButton.disabled = busy || !tauri || list.length < 2;
+    az.disabled = za.disabled = busy || pageMode || displaced.size > 0 || list.length < 2;
+    az.hidden = za.hidden = pageMode;
+    mergeButton.disabled = busy || !tauri || list.length < 2 || list.some((file) => file.loading) || !pages.length;
+    filesView.disabled = pagesView.disabled = perFile.input.disabled = keep.input.disabled = busy;
+    filesView.setAttribute('aria-pressed', String(!pageMode));
+    pagesView.setAttribute('aria-pressed', String(pageMode));
+    cards.hidden = pageMode;
+    grid.hidden = !pageMode;
+    customOrder.hidden = pageMode || !displaced.size;
+    reset.disabled = busy;
     hint.hidden = Boolean(list.length);
     for (const [i, file] of list.entries()) {
-      file.up.disabled = busy || i === 0;
-      file.down.disabled = busy || i === list.length - 1;
+      file.up.disabled = busy || displaced.size > 0 || i === 0;
+      file.down.disabled = busy || displaced.size > 0 || i === list.length - 1;
+      file.range.disabled = busy || !file.pdf || displaced.has(file);
       file.remove.disabled = busy;
-      file.card.draggable = !busy;
+      file.card.draggable = !busy && !displaced.size;
+    }
+    for (const { card, rotate, remove } of tiles.values()) {
+      card.draggable = !busy;
+      rotate.disabled = remove.disabled = busy;
     }
   }
 
-  function setList(next) {
-    list = next;
-    const scrollTop = cards.scrollTop;
-    cards.replaceChildren(...list.map((file) => file.card));
-    cards.scrollTop = scrollTop;
+  function inFileOrder() {
+    const groups = pagesByFile(pages);
+    return list.flatMap((file) => groups.get(file) ?? []);
+  }
+
+  function setPages(next) {
+    pages = next;
+    displaced = displacedFiles(list, pages);
+    const groups = pagesByFile(pages);
+    for (const file of list) {
+      const range = pageRange(groups.get(file) ?? []);
+      if (file.range.defaultValue !== range) {
+        file.range.defaultValue = range;
+        file.range.value = range;
+      }
+    }
+    const shown = pageMode ? pages : [];
+    const visible = new Set(shown);
+    for (const [page, { box }] of tiles) {
+      if (visible.has(page)) continue;
+      releaseThumb(box);
+      tiles.delete(page);
+    }
+    const scrollTop = grid.scrollTop;
+    grid.replaceChildren(...shown.map((page) => tiles.get(page)?.card ?? makeTile(page)));
+    grid.scrollTop = scrollTop;
     status.textContent = '';
     updateControls();
   }
 
+  function setView(next) {
+    if (next === pageMode) return;
+    pageMode = next;
+    setPages(pages);
+  }
+
+  function setList(next) {
+    const kept = new Set(next);
+    for (const file of list) {
+      if (kept.has(file)) continue;
+      releaseThumb(file.thumb);
+      file.task?.destroy().catch(console.warn);
+    }
+    list = next;
+    const scrollTop = cards.scrollTop;
+    cards.replaceChildren(...list.map((file) => file.card));
+    cards.scrollTop = scrollTop;
+    setPages(displaced.size ? pages.filter(({ file }) => kept.has(file)) : inFileOrder());
+  }
+
+  function startDrag(event, item, label) {
+    dragged = item;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', label);
+  }
+
+  function makeTile(page) {
+    const label = `${page.file.name} p${page.pageIndex + 1}`;
+    const card = el('li'), box = el('div'), caption = el('span', label), actions = el('div');
+    card.tabIndex = 0;
+    card.setAttribute('aria-label', label);
+    card.style.borderTopColor = page.file.color;
+    box.className = 'merge-thumb';
+    box.setAttribute('aria-hidden', 'true');
+    caption.className = 'merge-page-label';
+    caption.title = label;
+    actions.className = 'merge-actions';
+    const remove = button('×', () => edit('Delete'));
+    const rotate = button('↻', () => edit('r'));
+    for (const [control, action] of [[remove, 'Remove'], [rotate, 'Rotate 90°']]) {
+      control.title = action;
+      control.setAttribute('aria-label', `${action} ${label}`);
+    }
+    function edit(key) {
+      if (busy) return;
+      const i = pages.indexOf(page);
+      if (key === 'Delete') setPages(removeFile(pages, i));
+      else if (key === 'r') setPages(rotatePage(pages, i));
+      else {
+        const to = i + (key === 'ArrowLeft' ? -1 : 1);
+        const next = moveFile(pages, i, to);
+        if (next === pages) return;
+        setPages(next);
+        grid.children[to].focus();
+        return;
+      }
+      (grid.children[Math.min(i, pages.length - 1)] ?? pagesView).focus();
+    }
+    card.onkeydown = (event) => {
+      const key = event.key.toLowerCase() === 'r' ? 'r' : event.key;
+      if (event.ctrlKey ? key !== 'ArrowLeft' && key !== 'ArrowRight' : key !== 'Delete' && key !== 'r') return;
+      event.preventDefault();
+      edit(key);
+    };
+    card.ondragstart = (event) => startDrag(event, page, label);
+    card.ondragend = () => { dragged = null; };
+    actions.append(rotate, remove);
+    card.append(box, caption, actions);
+    tiles.set(page, { card, box, rotate, remove });
+    observeThumb({ ...page, box });
+    return card;
+  }
+
+  async function load(file) {
+    try {
+      const bytes = await file.read();
+      if (!list.includes(file)) return;
+      file.info.textContent = sizeLabel(bytes.byteLength);
+      const task = file.task = await loadMergePdf(bytes);
+      if (!list.includes(file)) {
+        task.promise.catch(() => {});
+        await task.destroy();
+        return;
+      }
+      const pdf = await task.promise;
+      if (!list.includes(file)) return;
+      file.pdf = pdf;
+      file.pageCount = pdf.numPages;
+      file.info.textContent += ` · ${pdf.numPages} ${pdf.numPages === 1 ? 'page' : 'pages'}`;
+      observeThumb({ file, pageIndex: 0, rotate: 0, box: file.thumb });
+      setPages(setFilePages(list, pages, file, expandPages([file])));
+    } catch (error) {
+      if (!list.includes(file)) return;
+      const reason = !file.task ? 'could not read file'
+        : error?.name === 'PasswordException' ? 'password-protected PDF' : 'invalid or damaged PDF';
+      file.error.textContent = `${file.name}: ${reason}.`;
+      if (!file.task) file.info.textContent = '';
+    } finally {
+      file.loading = false;
+      updateControls();
+    }
+  }
+
   function makeCard(item) {
-    const file = { ...item, card: el('li'), thumb: el('div'), info: el('div', 'Reading…'), error: el('div') };
+    const file = {
+      ...item, card: el('li'), thumb: el('div'), info: el('div', 'Reading…'), error: el('div'),
+      range: el('input'), loading: true, color: `hsl(${(color++ * 137.5) % 360} 62% 53%)`,
+    };
     file.thumb.className = 'merge-thumb';
     file.thumb.setAttribute('aria-hidden', 'true');
     file.info.className = 'merge-info';
     file.error.className = 'merge-error';
     const name = el('strong', file.name), description = el('div'), actions = el('div');
     description.className = 'merge-description';
-    description.append(name, file.info, file.error);
+    const rangeLabel = el('label', 'Pages');
+    rangeLabel.className = 'merge-range';
+    file.range.placeholder = 'None';
+    file.range.setAttribute('aria-label', `Page range for ${file.name}`);
+    file.range.onkeydown = (event) => {
+      if (event.key === 'Enter') file.range.blur();
+    };
+    file.range.onchange = () => {
+      const range = file.range.value;
+      try {
+        if (!file.range.disabled) setPages(replacePageRange(list, pages, file, range));
+      } catch (error) {
+        status.textContent = error.message;
+      }
+      file.range.value = file.range.defaultValue;
+    };
+    rangeLabel.append(file.range);
+    description.append(name, file.info, rangeLabel, file.error);
     actions.className = 'merge-actions';
     file.up = button('↑', () => {
       setList(moveUp(list, list.indexOf(file)));
@@ -142,24 +342,26 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
     }
     actions.append(file.up, file.down, file.remove);
     file.card.append(file.thumb, description, actions);
-    file.card.ondragstart = (event) => {
-      dragged = file;
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', file.name);
-    };
+    file.card.ondragstart = (event) => startDrag(event, file, file.name);
     file.card.ondragend = () => { dragged = null; };
-    previews = previews.then(() => list.includes(file) && preview(file, () => list.includes(file)));
     return file;
   }
 
   function add(items) {
     const pdfs = items.filter(({ name }) => /\.pdf$/i.test(name));
-    if (pdfs.length) setList(addFiles(list, pdfs.map(makeCard)));
+    if (pdfs.length) {
+      const added = pdfs.map(makeCard);
+      setList(addFiles(list, added));
+      for (const file of added) load(file);
+    }
     if (pdfs.length !== items.length) status.textContent = 'Only .pdf files can be added.';
   }
 
   function open(active) {
     if (dialog.open) return;
+    pageMode = false;
+    perFile.input.checked = keep.input.checked = true;
+    color = 0;
     setList(clearFiles());
     if (active) add([active]);
     dialog.showModal();
@@ -174,7 +376,11 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
   function drop(event) {
     if (!dialog.open) return false;
     if (!busy && event.dataTransfer.files.length) add([...event.dataTransfer.files].map(fromFile));
-    else if (!busy && dragged) {
+    else if (!busy && pageMode && dragged) {
+      const to = [...grid.children].indexOf(event.target.closest?.('.merge-pages > li'));
+      const next = moveFile(pages, pages.indexOf(dragged), to);
+      if (next !== pages) setPages(next);
+    } else if (!busy && !displaced.size && dragged) {
       const to = list.findIndex(({ card }) => card.contains(event.target));
       const next = moveFile(list, list.indexOf(dragged), to);
       if (next !== list) setList(next);
@@ -213,12 +419,12 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
     updateControls();
     status.textContent = 'Merging PDFs…';
     try {
-      const inputs = [];
       for (const file of list) {
-        if (file.error.textContent) throw new Error(file.error.textContent);
-        inputs.push({ name: file.name, bytes: await read(file) });
+        if (!file.pdf) throw new Error(file.error.textContent);
       }
-      const bytes = await mergePdfs(inputs);
+      const bytes = await mergePdfs(pages, {
+        bookmarkPerFile: perFile.input.checked, keepBookmarks: keep.input.checked,
+      });
       let target = await tauri.core.invoke('test_merge_target');
       if (target === null) {
         const first = list[0].path;
@@ -240,7 +446,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
       openResult(target);
     } catch (error) {
       status.textContent = error?.message || String(error);
-      if (error?.fileIndex !== undefined) list[error.fileIndex].error.textContent = error.message;
+      if (error?.file) error.file.error.textContent = error.message;
     } finally {
       busy = false;
       updateControls();

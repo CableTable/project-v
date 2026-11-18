@@ -7,7 +7,7 @@ import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFName, StandardFonts } from 'pdf-lib';
 import { chromium } from 'playwright';
 
 const port = 9243;
@@ -232,6 +232,35 @@ try {
     await page.getByRole('tab', { selected: true }).getByText('merged.pdf', { exact: true }).waitFor();
   });
 
+  await step('merge pages', async () => {
+    await page.locator('#merge').click();
+    const dialog = page.getByRole('dialog', { name: 'Merge PDFs' });
+    await dialog.getByRole('button', { name: 'Clear all' }).click();
+    await dialog.getByRole('button', { name: 'Add files' }).click();
+    await dialog.getByRole('button', { name: 'Pages', exact: true }).click();
+    const grid = dialog.getByRole('list', { name: 'Pages in merge order' });
+    const removed = grid.getByRole('listitem', { name: `${basename(second)} p1` });
+    await removed.press('Control+ArrowLeft');
+    await dialog.getByRole('button', { name: 'Files', exact: true }).click();
+    const range = dialog.getByRole('textbox', { name: `Page range for ${basename(second)}` });
+    assert(await range.isDisabled());
+    await dialog.getByRole('button', { name: 'Reset page order' }).click();
+    assert(await range.isEnabled());
+    await dialog.getByRole('button', { name: 'Pages', exact: true }).click();
+    await removed.press('Delete');
+    const rotated = grid.getByRole('listitem', { name: `${basename(second)} p2` });
+    await rotated.getByRole('button', { name: /Rotate/ }).click();
+    await dialog.getByRole('button', { name: 'Files', exact: true }).click();
+    assert.equal(await range.inputValue(), '2');
+    await dialog.getByRole('button', { name: 'Merge', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    const target = join(root, 'out', 'merged.pdf');
+    const pdf = await PDFDocument.load(await readFile(target));
+    assert.deepEqual(pdf.getPages().map((page) => page.getRotation().angle), [0, 90]);
+    assert(pdf.catalog.has(PDFName.of('Outlines')));
+    await checkMerged(target, 2);
+  });
+
   await step('Ctrl+Shift+D requests a ProjectD.exe pick', async () => {
     assert.equal(await page.locator('body').getAttribute('data-v-pick'), null);
     await page.keyboard.press('Control+Shift+D');
@@ -245,6 +274,17 @@ try {
     assert.equal(await page.locator('#count').textContent(), '1000');
     await rendered(page, 1);
     timing('1000-page open', start);
+
+    await page.locator('#merge').click();
+    const dialog = page.getByRole('dialog', { name: 'Merge PDFs' });
+    const pagesStart = performance.now();
+    await dialog.getByRole('button', { name: 'Pages', exact: true }).click();
+    const grid = dialog.getByRole('list', { name: 'Pages in merge order' });
+    await grid.locator('canvas').first().waitFor();
+    timing('1000-page Pages view to first thumbnail', pagesStart);
+    assert.equal(await grid.getByRole('listitem').count(), 1000);
+    assert(await grid.locator('canvas').count() < 1000);
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   });
 
   await step('scroll to page 1000', async () => {
