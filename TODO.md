@@ -12,3 +12,8 @@
 | T7 | Zoom / pan lag on large PDFs + horizontal wheel (MX Master 3S) (grill-V-T7.md Q1-Q5 + Round 2 F1-F7) | done 833de0e (window-test --pdf: zoom step 15.9/17.1 ms, pan 16.7/18.0 ms, PASS horizontal wheel; real MX wheel unchecked) |
 | T8 | Own app icon, not Project D's | done f091bae + 8334e3c (tauri icon regen) |
 | T9 | CI flake: window-test "merge pages" one-shot isDisabled (CI 44236608559 attempt 1); retry waits for UI state (grill rook-hq/runs49/grill-V-T9.md) | done (King c03c350; local window-test 12 PASS, 0 FAIL) |
+| T10 | Bug: MX Master 3S thumb wheel scrolls sideways a few seconds, then stops (trackpad works); after T7 (ticket T101, support/tickets.md) | open: bugs first, grill first |
+| T11 | Bug: Print prints the app UI and blank pages: real PDF printing, Ctrl+P + Print button (ticket T110) | open: bugs first, grill first |
+| T12 | Open `.ai` files (PDF-compatible): Ctrl+O, drag-drop, Open with, Merge (ticket T104) | open, grill first |
+| T13 | Open `.tif` / `.tiff`: Ctrl+O, drag-drop, Open with; pages scroll like PDF pages (ticket T109) | open, grill first |
+| T14 | Icon without the "V": red square, white page, folded corner only (ticket T105; after T8) | open, grill first |
