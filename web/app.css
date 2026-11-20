@@ -19,6 +19,7 @@ button:disabled,.off{opacity:.45}
 #file-menu summary,#settings-menu summary{cursor:pointer;padding:3px 8px;border:1px solid var(--line);border-radius:3px;background:var(--field)}
 #file-menu .recent,#settings-menu .pop{position:absolute;top:100%;left:0;margin-top:3px;box-shadow:0 3px 9px #0004}
 #settings-menu .pop{padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:4px;white-space:nowrap}
+#settings-menu .pop label{display:block}#settings-menu .pop label+label{margin-top:6px}#wheel-log-path{color:var(--muted);margin-left:20px;user-select:text}
 #menu-recent,#start-recent{max-height:40vh;overflow:auto}
 .rr button:first-child{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis}
 .rr .missing{color:var(--muted);background:var(--panel)}

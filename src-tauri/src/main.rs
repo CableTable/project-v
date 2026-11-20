@@ -97,9 +97,45 @@ fn test_merge_target(app: tauri::AppHandle) -> Result<Option<PathBuf>, String> {
     Ok(Some(target))
 }
 
+const WHEEL_LOG_CAP: u64 = 1 << 20;
+
+/// T10 ⚙ "Log wheel events": appends `line` to wheel-log.txt in the app data folder and returns its path ("" only makes the file).
+/// Rust writes it, so the web gets no fs scope for app data.
+#[tauri::command]
+fn wheel_log(app: tauri::AppHandle, line: String) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let file = dir.join("wheel-log.txt");
+    append_capped(&file, &line, WHEEL_LOG_CAP).map_err(|e| e.to_string())?;
+    Ok(file)
+}
+
+/// Appends `text` unless the file would grow past `cap` bytes (then nothing more is written). Returns whether it wrote.
+fn append_capped(file: &Path, text: &str, cap: u64) -> std::io::Result<bool> {
+    use std::io::Write;
+    let size = fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+    if size + text.len() as u64 > cap {
+        return Ok(false);
+    }
+    fs::OpenOptions::new().create(true).append(true).open(file)?.write_all(text.as_bytes())?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{browser_args, grant_launch_paths, grantable, launch, test_dir, TEST_DIR_ENV};
+    use super::{append_capped, browser_args, grant_launch_paths, grantable, launch, test_dir, TEST_DIR_ENV};
+
+    #[test]
+    fn wheel_log_appends_until_the_cap() {
+        let file = std::env::temp_dir().join("pv-t10-wheel-log.txt");
+        let _ = std::fs::remove_file(&file);
+        assert!(append_capped(&file, "", 10).unwrap(), "an empty line only makes the file");
+        assert!(append_capped(&file, "abcd\n", 10).unwrap());
+        assert!(append_capped(&file, "efgh\n", 10).unwrap());
+        assert!(!append_capped(&file, "x", 10).unwrap(), "past the cap nothing is written");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "abcd\nefgh\n");
+        std::fs::remove_file(&file).unwrap();
+    }
     use std::{env, path::{Path, PathBuf}};
 
     #[test]
@@ -218,6 +254,7 @@ fn main() {
             test_dir,
             test_merge_inputs,
             test_merge_target,
+            wheel_log,
             project_d::open_in_d,
             project_d::set_d_path
         ])

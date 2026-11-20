@@ -1,5 +1,5 @@
 // Opening: Ctrl+O dialog, drag-drop, launch / second-launch paths (T1). Tabs (T2b): one tab per open file, tabs.js holds the list, the page view is viewer.js.
-import { openPdf, show, closeDoc, setInstantTabs } from './viewer.js';
+import { openPdf, show, closeDoc, setInstantTabs, setWheelLog } from './viewer.js';
 import { createSettings } from './settings-ui.js';
 import { emptyTabs, activeTab, findByKey, openTab, activate, closeTab, cycle, patchTab } from './tabs.js';
 import { createMergeWindow } from './merge-ui.js';
@@ -111,7 +111,20 @@ const fromFile = (file) => ({
   read: async () => new Uint8Array(await file.arrayBuffer()),
 });
 
-createSettings({ instantTabs: setInstantTabs });
+/** ⚙ "Log wheel events" (T10): Rust appends each line to wheel-log.txt in the app data folder (stops at 1 MB); the panel shows the path. */
+function wheelLog(on) {
+  const shown = $('wheel-log-path');
+  shown.textContent = '';
+  setWheelLog(null);
+  if (!on || !tauri) return;
+  const write = (line) => tauri.core.invoke('wheel_log', { line });
+  write('').then((path) => {
+    if (!$('wheel-log').checked) return; // switched off while the file was being made
+    shown.textContent = path;
+    setWheelLog((line) => write(line).catch((e) => console.warn('Wheel log', e)));
+  }, (e) => { shown.textContent = `Could not write the wheel log: ${e}`; });
+}
+createSettings({ instantTabs: setInstantTabs, wheelLog });
 const remember = createRecentFiles({ tauri, open: (path) => openAll([fromPath(path)]), say });
 
 const merge = createMergeWindow({ tauri, fromPath, fromFile, openResult: (path) => openAll([fromPath(path)], true) });

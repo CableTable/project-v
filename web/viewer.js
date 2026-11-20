@@ -4,6 +4,7 @@ import { makeDoc, layout, visibleRange, currentPage, scrollTopFor, anchorAt, yOf
 import { rangesForHits, textNodes } from './find-layer.js';
 import { buildPageLists, THUMB_W } from './page-lists.js';
 import { keepList } from './keep.js';
+import { horizontalWheel, wheelLine } from './wheel.js';
 
 // pdf.js is loaded on demand, so cold start does not parse its 400 KB.
 const loadPdfjs = () => import('./vendor/pdfjs/pdf.min.mjs');
@@ -12,7 +13,7 @@ const $ = (id) => document.getElementById(id);
 const view = $('view'), pages = $('pages'), thumbs = $('thumbs'), pageBox = $('page');
 const dpr = () => Math.min(window.devicePixelRatio || 1, 2); // 2x sharpness is enough; more costs memory per canvas
 
-let cur = null, side = true, queued = false, wheelFallback = null;
+let cur = null, side = true, queued = false, wheelLog = null;
 let instant = true, kept = []; // T15: with `instant` on, `kept` (most recent first, `cur` included) are the 5 handles whose drawn pages stay while in the background
 pages.style.setProperty('--gap', GAP + 'px');
 pages.style.setProperty('--pad', PAD + 'px');
@@ -406,32 +407,16 @@ document.addEventListener('wheel', (e) => {
   const r = view.getBoundingClientRect();
   zoomStep(e.deltaY < 0 ? WHEEL_ZOOM : 1 / WHEEL_ZOOM, e.clientX - r.left, e.clientY - r.top);
 }, { passive: false });
-function scrollWheel(e, distance) {
-  const left = view.scrollLeft;
-  view.scrollLeft += distance;
-  if (view.scrollLeft !== left) e.preventDefault();
-}
+const scrollWheel = horizontalWheel(view);
 view.addEventListener('wheel', (e) => {
-  if (!cur || e.ctrlKey || e.defaultPrevented) return;
-  const { deltaMode, deltaX, deltaY, shiftKey } = e;
-  const dx = deltaX || (shiftKey ? deltaY : 0);
-  if (!dx) return;
-  const distance = dx * (deltaMode === 1 ? 16 : deltaMode === 2 ? view.clientWidth : 1);
-  if (!shiftKey && !deltaY) return scrollWheel(e, distance);
-
-  const t = cur, left = view.scrollLeft;
-  if (wheelFallback?.t === t && wheelFallback.left === left) {
-    wheelFallback.events.push([e, distance]);
-    return;
-  }
-  const fallback = wheelFallback = { t, left, events: [[e, distance]] };
-  // Chromium can apply native wheel scrolling after the first frame callback.
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    if (wheelFallback === fallback) wheelFallback = null;
-    if (cur !== t || view.scrollLeft !== left) return;
-    for (const [event, dx] of fallback.events) scrollWheel(event, dx);
-  }));
+  const before = view.scrollLeft;
+  const path = !cur || e.ctrlKey || e.defaultPrevented ? 'none' : scrollWheel(e);
+  const log = wheelLog;
+  if (log) requestAnimationFrame(() => log(wheelLine(e, path, before, view.scrollLeft)));
 }, { passive: false });
+
+/** The ⚙ "Log wheel events" toggle: `write(line)` gets one line per wheel event on the view, null stops it. */
+export function setWheelLog(write) { wheelLog = write; }
 view.addEventListener('scroll', () => {
   if (queued) return;
   queued = true;
