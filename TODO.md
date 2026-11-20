@@ -17,6 +17,6 @@
 | T12 | Open `.ai` files (PDF-compatible): Ctrl+O, drag-drop, Open with, Merge (ticket T104) | open, grill first |
 | T13 | Open `.tif` / `.tiff`: Ctrl+O, drag-drop, Open with; pages scroll like PDF pages (ticket T109) | open, grill first |
 | T14 | Icon without the "V": red square, white page, folded corner only (ticket T105; after T8) | open, grill first |
-| T15 | Bug: switching PDF tabs shows white pages first: keep the last 5 tabs drawn, switch instantly; ⚙ toggle for less RAM (ticket T115) | open: bugs first, grill first |
+| T15 | Bug: switching PDF tabs shows white pages first: keep the last 5 tabs drawn, switch instantly; ⚙ toggle for less RAM (ticket T115) | done fa4ca0f (window-test 15 PASS on the exe; grill rook-hq/runs53/grill-V-T15.md) |
 | T16 | Closing V with 2+ tabs open asks: Close all / Close this tab / Cancel (ticket T116) | open, grill first |
 | T17 | Select and copy text: drag on text selects, Ctrl+C copies, drag on empty space pans (ticket T117) | open, grill first |
