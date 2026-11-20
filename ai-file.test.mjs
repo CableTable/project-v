@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { OPEN_EXTS, NO_PDF_PART, isAi, hasPdfHeader } from './web/ai-file.js';
 
 const bytes = (text) => new TextEncoder().encode(text);
@@ -22,4 +24,12 @@ test('%PDF must be in the first 1024 bytes', () => {
 
 test('the message tells the user what to switch on in Illustrator', () => {
   assert.equal(NO_PDF_PART, "This .ai file has no PDF part. In Illustrator, save it again with 'Create PDF Compatible File' on.");
+});
+
+test('no web module contains the PDF magic text', () => {
+  // Tauri sniffs content: a module with this text is served as application/pdf and fails to load (T12).
+  const hits = readdirSync('web', { recursive: true })
+    .filter((f) => !/^vendor[\\/]/.test(f) && /\.(m?js|html|css)$/.test(f))
+    .filter((f) => readFileSync(join('web', f), 'latin1').includes('%' + 'PDF'));
+  assert.deepEqual(hits, []);
 });

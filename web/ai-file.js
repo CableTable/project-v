@@ -4,7 +4,7 @@ export const NO_PDF_PART = "This .ai file has no PDF part. In Illustrator, save 
 
 export const isAi = (name) => /\.ai$/i.test(name);
 
-/** True when `%PDF` is in the first 1024 bytes (a PDF header may follow a little junk). */
+/** True when the PDF header is in the first 1024 bytes (it may follow a little junk). */
 export function hasPdfHeader(bytes) {
   const head = bytes.subarray(0, 1024);
   for (let i = 0; i + 4 <= head.length; i++) {
