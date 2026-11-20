@@ -3,7 +3,9 @@ import {
   moveUp, pageRange, pagesByFile, removeFile, replacePageRange, rotatePage, setFilePages, sortFiles,
 } from './merge.js';
 
-const filters = [{ name: 'PDF', extensions: ['pdf'] }];
+import { OPEN_EXTS, NO_PDF_PART, isAi, hasPdfHeader } from './ai-file.js';
+
+const filters = [{ name: 'PDF or AI', extensions: OPEN_EXTS }];
 const el = (tag, text = '') => Object.assign(document.createElement(tag), { textContent: text });
 const button = (text, run) => Object.assign(el('button', text), { type: 'button', onclick: run });
 
@@ -89,7 +91,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
   const reset = button('Reset page order', () => setPages(inFileOrder()));
   customOrder.append(reset);
 
-  const hint = el('p', 'Drop PDF files here');
+  const hint = el('p', 'Drop PDF or AI files here');
   hint.className = 'merge-hint';
   const cards = el('ol');
   cards.setAttribute('aria-label', 'PDFs in merge order');
@@ -267,6 +269,11 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
     try {
       const bytes = await file.read();
       if (!list.includes(file)) return;
+      if (isAi(file.name) && !hasPdfHeader(bytes)) { // no task: the merge refuses the file with this text
+        file.error.textContent = `${file.name}: ${NO_PDF_PART}`;
+        file.info.textContent = '';
+        return;
+      }
       file.info.textContent = sizeLabel(bytes.byteLength);
       const task = file.task = await loadMergePdf(bytes);
       if (!list.includes(file)) {
@@ -348,13 +355,13 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
   }
 
   function add(items) {
-    const pdfs = items.filter(({ name }) => /\.pdf$/i.test(name));
+    const pdfs = items.filter(({ name }) => /\.(pdf|ai)$/i.test(name));
     if (pdfs.length) {
       const added = pdfs.map(makeCard);
       setList(addFiles(list, added));
       for (const file of added) load(file);
     }
-    if (pdfs.length !== items.length) status.textContent = 'Only .pdf files can be added.';
+    if (pdfs.length !== items.length) status.textContent = 'Only .pdf or .ai files can be added.';
   }
 
   function open(active) {

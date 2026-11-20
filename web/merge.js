@@ -166,7 +166,7 @@ export async function mergePdfs(pages, { bookmarkPerFile = true, keepBookmarks =
         if (!targets.has(page.pageIndex)) targets.set(page.pageIndex, copy.ref);
       }
       const children = keepBookmarks ? await sourceBookmarks(file, targets) : [];
-      if (bookmarkPerFile) bookmarks.push({ title: file.name.replace(/\.pdf$/i, ''), target: copied[0].ref, children });
+      if (bookmarkPerFile) bookmarks.push({ title: file.name.replace(/\.(pdf|ai)$/i, ''), target: copied[0].ref, children });
       else bookmarks.push(...children);
     } catch (cause) {
       // pdf-lib 1.17.1 emits a plain Error for encrypted documents.

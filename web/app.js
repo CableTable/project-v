@@ -6,6 +6,7 @@ import { createMergeWindow } from './merge-ui.js';
 import { createRecentFiles } from './recent-ui.js';
 import { showFind } from './find-ui.js';
 import { canOpenInD, isOpenInDShortcut } from './open-in-d.js';
+import { OPEN_EXTS } from './ai-file.js';
 import { createPrint } from './print-ui.js';
 import { createCloseAsk } from './close-ask.js';
 
@@ -160,7 +161,7 @@ $('print').onclick = () => print.start(activeTab(tabs)?.doc);
 
 async function pickFile() {
   if (!tauri) return;
-  const path = await tauri.dialog.open({ filters: [{ name: 'PDF', extensions: ['pdf'] }] }); // null when cancelled
+  const path = await tauri.dialog.open({ filters: [{ name: 'PDF or AI', extensions: OPEN_EXTS }] }); // null when cancelled
   if (path) openAll([fromPath(path)]);
 }
 $('open').onclick = $('open2').onclick = pickFile;

@@ -6,6 +6,7 @@ import { buildPageLists, THUMB_W } from './page-lists.js';
 import { keepList } from './keep.js';
 import { horizontalWheel, wheelLine } from './wheel.js';
 import { pressAction, selectedText } from './text-select.js';
+import { isAi, hasPdfHeader, NO_PDF_PART } from './ai-file.js';
 
 // pdf.js is loaded on demand, so cold start does not parse its 400 KB.
 const loadPdfjs = () => import('./vendor/pdfjs/pdf.min.mjs');
@@ -22,6 +23,7 @@ thumbs.style.setProperty('--tw', THUMB_W + 'px');
 
 /** Opens a PDF from its bytes and returns its handle (not on screen until show(handle)). Throws Error('<name>: <why>') for a broken or password file. */
 export async function openPdf(name, bytes) {
+  if (isAi(name) && !hasPdfHeader(bytes)) throw new Error(`${name}: ${NO_PDF_PART}`);
   const pdfjs = await loadPdfjs();
   pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdfjs/pdf.worker.min.mjs', import.meta.url).href;
   const task = pdfjs.getDocument({ data: bytes });

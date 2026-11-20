@@ -159,3 +159,12 @@ test('merge writes remapped outlines for kept pages and promotes kept children',
   assert.deepEqual(await outlines(await mergePdfs(pages, { keepBookmarks: false })), [['同じ', 0, []], ['同じ', 1, []]]);
   assert.deepEqual(await outlines(await mergePdfs(pages, { bookmarkPerFile: false, keepBookmarks: false })), []);
 });
+
+test('an .ai input is merged like a PDF and its bookmark name loses the .ai', async () => {
+  const ai = { name: 'logo.AI', bytes: await pdf([120]) };
+  const bytes = await mergePdfs([{ file: ai, pageIndex: 0, rotate: 0 }]);
+  assert.equal((await PDFDocument.load(bytes)).getPageCount(), 1);
+  const task = await loadMergePdf(bytes);
+  try { assert.deepEqual((await (await task.promise).getOutline()).map(({ title }) => title), ['logo']); }
+  finally { await task.destroy(); }
+});

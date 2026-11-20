@@ -30,11 +30,13 @@ fn grant_launch_paths(paths: &[PathBuf], mut allow: impl FnMut(&Path)) {
     }
 }
 
-/// Only an existing absolute .pdf file may get an fs scope grant.
+/// Only an existing absolute .pdf or .ai file may get an fs scope grant.
 fn grantable(path: &Path) -> bool {
     path.is_absolute()
         && path.is_file()
-        && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+        && path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("pdf") || e.eq_ignore_ascii_case("ai"))
 }
 
 #[tauri::command]
@@ -175,11 +177,15 @@ mod tests {
     fn existing_pdf_any_case_is_grantable() {
         assert!(grantable(&temp_file("a.pdf")));
         assert!(grantable(&temp_file("b.PDF")));
+        assert!(grantable(&temp_file("c.ai")));
+        assert!(grantable(&temp_file("d.AI")));
     }
 
     #[test]
     fn other_extensions_are_refused() {
         assert!(!grantable(&temp_file("a.pdf.exe")));
+        assert!(!grantable(&temp_file("a.ai.exe")));
+        assert!(!grantable(&temp_file("a.eps")));
         assert!(!grantable(&temp_file("a.txt")));
         assert!(!grantable(&temp_file("noext")));
     }
@@ -188,22 +194,25 @@ mod tests {
     fn launch_only_grants_existing_pdfs() {
         let pdf = temp_file("launch.pdf");
         let txt = temp_file("launch.txt");
+        let ai = temp_file("launch.ai");
         let cwd = pdf.parent().unwrap();
         let args = [
             "ProjectV.exe",
             txt.file_name().unwrap().to_str().unwrap(),
             "pv-t3b-missing-launch.pdf",
             pdf.file_name().unwrap().to_str().unwrap(),
+            ai.file_name().unwrap().to_str().unwrap(),
         ];
         let paths = launch::file_paths(args.map(str::to_owned), cwd);
         let mut granted = Vec::new();
         grant_launch_paths(&paths, |path| granted.push(path.to_path_buf()));
         std::fs::remove_file(&txt).unwrap();
         std::fs::remove_file(&pdf).unwrap();
+        std::fs::remove_file(&ai).unwrap();
         assert_eq!(
             granted,
-            vec![pdf],
-            "only the existing PDF may get a launch grant"
+            vec![pdf, ai],
+            "only the existing PDF and AI files may get a launch grant"
         );
     }
 
