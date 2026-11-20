@@ -18,5 +18,5 @@
 | T13 | Open `.tif` / `.tiff`: Ctrl+O, drag-drop, Open with; pages scroll like PDF pages (ticket T109) | open, grill first |
 | T14 | Icon without the "V": red square, white page, folded corner only (ticket T105; after T8) | open, grill first |
 | T15 | Bug: switching PDF tabs shows white pages first: keep the last 5 tabs drawn, switch instantly; ⚙ toggle for less RAM (ticket T115) | done fa4ca0f (window-test 15 PASS on the exe; grill rook-hq/runs53/grill-V-T15.md) |
-| T16 | Closing V with 2+ tabs open asks: Close all / Close this tab / Cancel (ticket T116) | open, grill first |
+| T16 | Closing V with 2+ tabs open asks: Close all / Close this tab / Cancel (ticket T116) | done 198ec57 (Bishop Opus build + review ship; unit "ℹ fail 0", window-test 15 PASS on the exe; exe close with 0 tabs exits, with 2 PDFs stays open (box up); Close all -> exit by a real click unchecked: his check; grill rook-hq/runs53/grill-VT16.md) |
 | T17 | Select and copy text: drag on text selects, Ctrl+C copies, drag on empty space pans (ticket T117) | open, grill first |
