@@ -1,5 +1,6 @@
 // Opening: Ctrl+O dialog, drag-drop, launch / second-launch paths (T1). Tabs (T2b): one tab per open file, tabs.js holds the list, the page view is viewer.js.
-import { openPdf, show, closeDoc } from './viewer.js';
+import { openPdf, show, closeDoc, setInstantTabs } from './viewer.js';
+import { createSettings } from './settings-ui.js';
 import { emptyTabs, activeTab, findByKey, openTab, activate, closeTab, cycle, patchTab } from './tabs.js';
 import { createMergeWindow } from './merge-ui.js';
 import { createRecentFiles } from './recent-ui.js';
@@ -110,6 +111,7 @@ const fromFile = (file) => ({
   read: async () => new Uint8Array(await file.arrayBuffer()),
 });
 
+createSettings({ instantTabs: setInstantTabs });
 const remember = createRecentFiles({ tauri, open: (path) => openAll([fromPath(path)]), say });
 
 const merge = createMergeWindow({ tauri, fromPath, fromFile, openResult: (path) => openAll([fromPath(path)], true) });

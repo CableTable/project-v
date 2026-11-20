@@ -438,6 +438,63 @@ try {
     assert.equal(await calls(), printsBefore);
   });
 
+  await step('instant tab switching: last 5 tabs stay drawn; the ⚙ toggle frees them', async () => {
+    const names = [1, 2, 3, 4, 5, 6].map((n) => `kept${n}.pdf`);
+    const open = async (name) => {
+      await launch(exe, await fixture(join(root, name), 2));
+      await page.getByRole('tab', { selected: true }).getByText(name, { exact: true }).waitFor();
+      await rendered(page, 1);
+    };
+    // The switch and the count happen in one task: nothing has had time to paint.
+    const canvasesAfterSwitch = (name) => page.evaluate((name) => {
+      [...document.querySelectorAll('#tabs .tl')].find((b) => b.textContent === name).click();
+      return document.querySelectorAll('#pages .pg canvas').length;
+    }, name);
+    const closeTabByName = (name) => page.evaluate((name) => {
+      [...document.querySelectorAll('#tabs .tab')].find((t) => t.querySelector('.tl').textContent === name).querySelector('.tx').click();
+    }, name);
+    const setting = async (on) => {
+      const menu = page.locator('#settings-menu');
+      await menu.locator('summary').click();
+      await page.locator('#instant-tabs').setChecked(on);
+      await page.keyboard.press('Escape');
+      assert.equal(await menu.evaluate((el) => el.open), false, 'Esc closes the ⚙ menu');
+    };
+
+    await open(names[0]);
+    await open(names[1]);
+    assert.equal(await canvasesAfterSwitch(names[0]), 2, 'A -> B -> A: A is drawn the moment it is shown');
+    await rendered(page, 1);
+    for (const name of names.slice(2)) await open(name); // kept: 6, 5, 4, 3, 1 (the 1st is the 5th); the 2nd is the oldest, freed by the 6th
+    assert.equal(await canvasesAfterSwitch(names[0]), 2, 'the 5th most recent tab is kept');
+    await rendered(page, 1);
+    assert.equal(await canvasesAfterSwitch(names[1]), 0, 'the oldest tab was freed when the 6th came');
+    await rendered(page, 1);
+
+    // kept now: 2, 1, 6, 5, 4. Closing 1 takes it off the list, so showing 3 frees nothing.
+    await closeTabByName(names[0]);
+    await canvasesAfterSwitch(names[2]);
+    await rendered(page, 1);
+    assert.equal(await canvasesAfterSwitch(names[3]), 2, 'a closed tab leaves the list: nobody was freed for the 3rd');
+    await rendered(page, 1);
+
+    // toggle off: the kept background tabs are freed at once; leaving a tab frees it like before
+    await setting(false);
+    assert.equal(await page.evaluate(() => localStorage.getItem('v.instantTabs')), '0');
+    assert.equal(await canvasesAfterSwitch(names[5]), 0, 'background tab freed by the toggle');
+    await rendered(page, 1);
+    assert.equal(await canvasesAfterSwitch(names[3]), 0, 'toggle off: the tab left was freed');
+    await rendered(page, 1);
+    await setting(true);
+    assert.equal(await page.evaluate(() => localStorage.getItem('v.instantTabs')), '1');
+    await page.locator('#settings-menu summary').click();
+    await page.locator('#view').click(); // click outside closes it too
+    assert.equal(await page.locator('#settings-menu').evaluate((el) => el.open), false);
+    await canvasesAfterSwitch(names[5]);
+    await rendered(page, 1);
+    assert.equal(await canvasesAfterSwitch(names[3]), 2, 'toggle on again: the tab left stays drawn');
+  });
+
   if (timingPdf) await step('time viewer with --pdf', async () => {
     await launch(exe, timingPdf);
     await page.getByRole('tab', { selected: true }).getByText(basename(timingPdf), { exact: true }).waitFor();

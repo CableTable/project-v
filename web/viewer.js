@@ -3,6 +3,7 @@
 import { makeDoc, layout, visibleRange, currentPage, scrollTopFor, anchorAt, yOfAnchor, fitWidthZoom, fitPageZoom, zoomBy, zoomPaint, canvasScale, PX_PER_PT, GAP, PAD } from './doc.js';
 import { rangesForHits, textNodes } from './find-layer.js';
 import { buildPageLists, THUMB_W } from './page-lists.js';
+import { keepList } from './keep.js';
 
 // pdf.js is loaded on demand, so cold start does not parse its 400 KB.
 const loadPdfjs = () => import('./vendor/pdfjs/pdf.min.mjs');
@@ -12,6 +13,7 @@ const view = $('view'), pages = $('pages'), thumbs = $('thumbs'), pageBox = $('p
 const dpr = () => Math.min(window.devicePixelRatio || 1, 2); // 2x sharpness is enough; more costs memory per canvas
 
 let cur = null, side = true, queued = false, wheelFallback = null;
+let instant = true, kept = []; // T15: with `instant` on, `kept` (most recent first, `cur` included) are the 5 handles whose drawn pages stay while in the background
 pages.style.setProperty('--gap', GAP + 'px');
 pages.style.setProperty('--pad', PAD + 'px');
 thumbs.style.setProperty('--tw', THUMB_W + 'px');
@@ -44,7 +46,8 @@ export async function openPdf(name, bytes) {
   return t;
 }
 
-/** Puts a handle on screen (null: the empty state). The one leaving keeps its scroll and zoom; its big page canvases are freed. */
+/** Puts a handle on screen (null: the empty state). The one leaving keeps its scroll and zoom; its big page canvases are freed,
+ *  unless "Instant tab switching" is on and it is one of the 5 most recent (then they stay drawn, only pending renders stop). */
 export function show(t) {
   if (t === cur) return;
   if (cur) {
@@ -52,10 +55,16 @@ export function show(t) {
     cur.repaintTimer = null;
     cur.scrollTop = view.scrollTop;
     cur.scrollLeft = view.scrollLeft;
-    for (const i of [...cur.live.keys()]) drop(cur.live, i, cur.slots[i]);
+    if (instant) for (const live of [cur.live, cur.liveThumbs]) settle(live);
+    else for (const i of [...cur.live.keys()]) drop(cur.live, i, cur.slots[i]);
   }
   cur = t;
   if (!t) return showEmpty();
+  if (instant) {
+    const { order, free } = keepList(kept, t);
+    kept = order;
+    free.forEach(freeTab);
+  }
   pages.replaceChildren(...t.slots);
   pages.style.setProperty('--scale-factor', t.zoom * PX_PER_PT);
   thumbs.replaceChildren(...t.thumbEls);
@@ -68,6 +77,27 @@ export function show(t) {
   t.fit ? applyFit() : update();
   revealFindHit(t.find.reveal);
   if (side) thumbs.children[t.sel]?.scrollIntoView({ block: 'nearest' });
+}
+
+/** The ⚙ toggle. Off: every background tab's kept pages are freed at once. */
+export function setInstantTabs(on) {
+  if (on === instant) return;
+  instant = on;
+  if (!on) kept.filter((h) => h !== cur).forEach(freeTab);
+  kept = on && cur ? [cur] : [];
+}
+
+/** A tab leaves the screen: stop renders that are still running, keep the finished canvases (a started page with none is forgotten so it is drawn again). */
+function settle(live) {
+  for (const [i, rec] of live) {
+    cancelPending(rec);
+    if (!rec.page) live.delete(i);
+  }
+}
+
+function freeTab(t) {
+  for (const i of [...t.live.keys()]) drop(t.live, i, t.slots[i]);
+  for (const i of [...t.liveThumbs.keys()]) drop(t.liveThumbs, i, t.thumbEls[i].firstChild);
 }
 
 function showEmpty() {
@@ -107,6 +137,7 @@ async function readSizes(t, sizes, pageSize) {
 /** Frees a handle: its pdf.js document and renders are destroyed. The tab's owner drops the handle afterwards. */
 export function closeDoc(t) {
   t.closed = true;
+  kept = kept.filter((h) => h !== t);
   clearTimeout(t.repaintTimer);
   t.io.disconnect();
   for (const rec of [...t.live.values(), ...t.liveThumbs.values()]) cancelPaint(rec);
@@ -120,7 +151,11 @@ function build(t) {
   t.io = new IntersectionObserver((entries) => {
     for (const { target, isIntersecting } of entries) {
       const i = +target.dataset.i;
-      if (!isIntersecting) { drop(t.liveThumbs, i, target); continue; }
+      if (!isIntersecting) {
+        if (t !== cur && kept.includes(t)) continue; // a kept tab's thumbnails leave the DOM on a switch but stay drawn
+        drop(t.liveThumbs, i, target);
+        continue;
+      }
       if (!t.liveThumbs.has(i)) paintThumbnail(t, i, target);
     }
   }, { root: thumbs, rootMargin: '200px' });
