@@ -6,6 +6,7 @@ import {
 import { OPEN_EXTS, NO_PDF_PART, isAi, hasPdfHeader } from './ai-file.js';
 
 const filters = [{ name: 'PDF or AI', extensions: OPEN_EXTS }];
+export const saveFilters = [{ name: 'PDF', extensions: ['pdf'] }]; // the merged file is always a .pdf
 const el = (tag, text = '') => Object.assign(document.createElement(tag), { textContent: text });
 const button = (text, run) => Object.assign(el('button', text), { type: 'button', onclick: run });
 
@@ -439,7 +440,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
       if (target === null) {
         const first = list[0].path;
         const defaultPath = first ? await tauri.path.join(await tauri.path.dirname(first), 'merged.pdf') : 'merged.pdf';
-        target = await tauri.dialog.save({ defaultPath, filters });
+        target = await tauri.dialog.save({ defaultPath, filters: saveFilters });
       }
       status.textContent = '';
       if (!target) return;
