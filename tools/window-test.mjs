@@ -238,7 +238,7 @@ try {
       await fixture(join(input, 'first.pdf'), 1),
       await fixture(join(input, 'second.PDF'), 2),
       await fixture(join(root, '1000-pages.pdf'), 1000),
-      await fixture(join(input, 'mixed.pdf'), 3, [2]),
+      await fixture(join(root, 'mixed.pdf'), 3, [2]),
     ];
   });
 
