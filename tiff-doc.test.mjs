@@ -77,6 +77,17 @@ test('TIFF doc: Deflate (8) and Adobe Deflate (32946) pages give the same pixels
   assert.match(ctx.texts[0], /^bad\.tif page 1: this TIFF page can't be read/);
 });
 
+test('TIFF doc: two renders of one Deflate page at once decode it once; UTIF.inflated is emptied after', async () => {
+  const doc = openTiff('z.tif', makeTiff([{ w: 40, h: 30, rgb: [200, 30, 10], deflate: 8 }])), page = await doc.getPage(1);
+  const draw = () => page.render({ canvasContext: fakeContext(), viewport: page.getViewport({ scale: 1 }) }).promise;
+  decodes = 0;
+  await Promise.all([draw(), draw()]);
+  assert.equal(decodes, 1);
+  assert.equal(UTIF.inflated.size, 0);
+  await draw();
+  assert.equal(decodes, 1, 'then cached');
+});
+
 test('TIFF doc: a cancelled render rejects like pdf.js and draws nothing; destroy does not throw', async () => {
   const doc = openTiff('scan.tif', scan()), page = await doc.getPage(1), ctx = fakeContext();
   const task = page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: 1 }) });

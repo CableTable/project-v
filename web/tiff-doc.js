@@ -39,26 +39,38 @@ export function openTiff(name, bytes) {
   for (const ifd of pages) if (ifd.t259?.[0] === 32946) ifd.t259 = [8]; // Adobe's code for the same zlib data
   const odd = pages.find((ifd) => !DECODED.includes(ifd.t259?.[0] ?? 1));
   if (odd) throw unreadable(name, `compression ${odd.t259[0]} not supported`);
-  const sizes = pages.map(pageSize), cache = new Map(), failed = new Map();
+  const sizes = pages.map(pageSize), cache = new Map(), failed = new Map(), inflight = new Map();
   let cached = 0;
 
   /** RGBA of page i (0-based), decoded once; the most recently used pages stay. Throws (once logged) when the page cannot be decoded. */
+  async function decode(i) {
+    let rgba;
+    try {
+      if (pages[i].t256[0] * pages[i].t257[0] > MAX_PIXELS) throw new Error('over 268 million pixels');
+      if (pages[i].t259?.[0] === 8) UTIF.inflated = await inflateStrips(buf, pages[i]);
+      UTIF.decodeImage(buf, pages[i], pages);
+      rgba = UTIF.toRGBA8(pages[i]);
+    } catch (e) {
+      failed.set(i, e);
+      console.warn('TIFF page', i + 1, e);
+      throw e;
+    } finally {
+      delete pages[i].data; // the raw strips: only the RGBA is kept
+      UTIF.inflated = new Map(); // the last page's inflated strips
+      inflight.delete(i);
+    }
+    cached += rgba.length;
+    return rgba;
+  }
+
   async function pixels(i) {
     if (failed.has(i)) throw failed.get(i);
     let rgba = cache.get(i);
     if (rgba) cache.delete(i);
     else {
-      try {
-        if (pages[i].t256[0] * pages[i].t257[0] > MAX_PIXELS) throw new Error('over 268 million pixels');
-        if (pages[i].t259?.[0] === 8) UTIF.inflated = await inflateStrips(buf, pages[i]);
-        UTIF.decodeImage(buf, pages[i], pages);
-        rgba = UTIF.toRGBA8(pages[i]);
-      } catch (e) {
-        failed.set(i, e);
-        console.warn('TIFF page', i + 1, e);
-        throw e;
-      } finally { delete pages[i].data; } // the raw strips: only the RGBA is kept
-      cached += rgba.length;
+      if (!inflight.has(i)) inflight.set(i, decode(i));
+      rgba = await inflight.get(i);
+      cache.delete(i); // the second waiter re-adds it below without counting its bytes twice
     }
     cache.set(i, rgba);
     for (const [k, old] of cache) {
@@ -69,7 +81,7 @@ export function openTiff(name, bytes) {
     return rgba;
   }
 
-  function free() { cache.clear(); cached = 0; }
+  function free() { cache.clear(); inflight.clear(); cached = 0; }
 
   async function getPage(n) {
     const { w, h } = sizes[n - 1], ifd = pages[n - 1];
