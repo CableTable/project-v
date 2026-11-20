@@ -56,6 +56,27 @@ test('TIFF doc: render draws the decoded RGBA scaled to the viewport; a drawn pa
   assert.equal(decodes, 4, 'destroy drops the cache');
 });
 
+test('TIFF doc: Deflate (8) and Adobe Deflate (32946) pages give the same pixels as uncompressed', async () => {
+  const pixelsOf = async (bytes, n) => {
+    const page = await openTiff('z.tif', bytes).getPage(n), ctx = fakeContext();
+    await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: 1 }) }).promise;
+    return ctx.draws[0].bmp.img.data;
+  };
+  const spec = [{ w: 40, h: 30, rgb: [200, 30, 10] }, { w: 16, h: 8, gray: 77 }];
+  const plain = makeTiff(spec);
+  for (const code of [8, 32946]) {
+    const z = makeTiff(spec.map((p) => ({ ...p, deflate: code })));
+    assert.ok(z.length < plain.length);
+    for (const n of [1, 2]) assert.deepEqual(await pixelsOf(z, n), await pixelsOf(plain, n));
+  }
+  const bad = makeTiff([{ w: 8, h: 8, gray: 5, deflate: 8 }]); // corrupt zlib data: the page text, not a crash
+  bad.fill(0xff, bad.length - 8);
+  const ctx = fakeContext(), warn = console.warn;
+  console.warn = () => {};
+  try { const page = await openTiff('bad.tif', bad).getPage(1); await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: 1 }) }).promise; } finally { console.warn = warn; }
+  assert.match(ctx.texts[0], /^bad\.tif page 1: this TIFF page can't be read/);
+});
+
 test('TIFF doc: a cancelled render rejects like pdf.js and draws nothing; destroy does not throw', async () => {
   const doc = openTiff('scan.tif', scan()), page = await doc.getPage(1), ctx = fakeContext();
   const task = page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: 1 }) });
@@ -70,7 +91,7 @@ test('TIFF doc: an unreadable file gives "<name>: this TIFF can\'t be read (<rea
   const cant = (name, why) => ({ message: `${name}: this TIFF can't be read (${why}).` });
   assert.throws(() => openTiff('a.tif', new TextEncoder().encode('not a tiff at all')), cant('a.tif', 'not a TIFF file'));
   assert.throws(() => openTiff('b.tif', new Uint8Array([0x49, 0x49, 42, 0, 0, 0, 0, 0])), cant('b.tif', 'no pages'));
-  assert.throws(() => openTiff('c.tif', makeTiff([{ w: 4, h: 4, gray: 0, compression: 8 }])), cant('c.tif', 'compression 8 not supported'));
+  assert.throws(() => openTiff('c.tif', makeTiff([{ w: 4, h: 4, gray: 0, compression: 34712 }])), cant('c.tif', 'compression 34712 not supported'));
   const looped = openTiff('d.tif', makeTiff([{ w: 4, h: 4, gray: 0 }, { w: 4, h: 4, gray: 9 }], { loop: true })); // corrupt: no hang
   assert.equal(looped.numPages, 2);
 });

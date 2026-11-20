@@ -3,7 +3,17 @@
 // The page list and sizes are read at open; a page's pixels are decoded when it is first drawn and kept until freed.
 import UTIF from './vendor/utif/UTIF.js';
 
-const DECODED = [1, 3, 4, 5, 6, 7, 32773, 32809]; // compressions the vendored UTIF decodes (8 = Deflate needs pako: not vendored)
+const DECODED = [1, 3, 4, 5, 6, 7, 8, 32773, 32809]; // compressions the vendored UTIF decodes (8 = Deflate: strips are inflated first, see inflateStrips)
+
+/** Deflate (zlib) strips / tiles of an IFD inflated with the built-in DecompressionStream: Map(byte offset -> bytes) for UTIF.inflated (UTIF's decode is synchronous). */
+async function inflateStrips(buf, ifd) {
+  const offs = ifd.t273 || ifd.t324, lens = ifd.t279 || ifd.t325, out = new Map();
+  for (let i = 0; i < offs.length; i++) {
+    const stream = new Blob([new Uint8Array(buf, offs[i], lens[i])]).stream().pipeThrough(new DecompressionStream('deflate'));
+    out.set(offs[i], new Uint8Array(await new Response(stream).arrayBuffer()));
+  }
+  return out;
+}
 const MAX_PIXELS = 2 ** 28; // 1 GB of RGBA (an A0 scan at 300 dpi is 140 M): a bigger claim froze the window for minutes in the decoder
 const CACHE_BYTES = 512 << 20; // shortcut: the oldest drawn pages are decoded again past 512 MB of RGBA; a smarter budget if big scans thrash
 
@@ -26,19 +36,21 @@ export function openTiff(name, bytes) {
   try { pages = UTIF.decode(buf).filter((ifd) => ifd.t256 && ifd.t257); }
   catch (e) { throw unreadable(name, e?.message || e); }
   if (!pages.length) throw unreadable(name, 'no pages');
+  for (const ifd of pages) if (ifd.t259?.[0] === 32946) ifd.t259 = [8]; // Adobe's code for the same zlib data
   const odd = pages.find((ifd) => !DECODED.includes(ifd.t259?.[0] ?? 1));
   if (odd) throw unreadable(name, `compression ${odd.t259[0]} not supported`);
   const sizes = pages.map(pageSize), cache = new Map(), failed = new Map();
   let cached = 0;
 
   /** RGBA of page i (0-based), decoded once; the most recently used pages stay. Throws (once logged) when the page cannot be decoded. */
-  function pixels(i) {
+  async function pixels(i) {
     if (failed.has(i)) throw failed.get(i);
     let rgba = cache.get(i);
     if (rgba) cache.delete(i);
     else {
       try {
         if (pages[i].t256[0] * pages[i].t257[0] > MAX_PIXELS) throw new Error('over 268 million pixels');
+        if (pages[i].t259?.[0] === 8) UTIF.inflated = await inflateStrips(buf, pages[i]);
         UTIF.decodeImage(buf, pages[i], pages);
         rgba = UTIF.toRGBA8(pages[i]);
       } catch (e) {
@@ -71,7 +83,7 @@ export function openTiff(name, bytes) {
           if (stop) throw cancelled();
           let bitmap;
           try {
-            const rgba = pixels(n - 1);
+            const rgba = await pixels(n - 1);
             bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.length), ifd.width, ifd.height));
           } catch (e) {
             if (stop) throw cancelled();

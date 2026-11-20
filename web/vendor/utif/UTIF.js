@@ -23,11 +23,12 @@
 // SOFTWARE.
 //
 // Project V changes: an ES module (`export default UTIF` at the end, no require / self globals); pako is not vendored, so
-// Deflate (compression 8) is not decoded; UTIF.decode stops at a repeated or out-of-range IFD offset (a corrupt file looped forever).
+// Deflate (compression 8) reads strips pre-inflated by the caller (UTIF.inflated); UTIF.decode stops at a repeated or out-of-range IFD offset (a corrupt file looped forever).
 
 var UTIF = {};
 
-var pako; // not vendored: Deflate pages fail (web/tiff-doc.js refuses compression 8 at open)
+var pako = { inflate: function(src) { return UTIF.inflated.get(src.byteOffset); } }; // pako is not vendored: web/tiff-doc.js inflates the strips first (DecompressionStream) into UTIF.inflated, keyed by byte offset
+UTIF.inflated = new Map();
 
 function log() { if (typeof process=="undefined" || process.env.NODE_ENV=="development") console.log.apply(console, arguments);  }
 
