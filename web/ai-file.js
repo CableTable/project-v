@@ -1,8 +1,9 @@
-// ai-file.js — .ai files open as PDFs when Illustrator saved them PDF-compatible (T12).
-export const OPEN_EXTS = ['pdf', 'ai'];
+// ai-file.js — .ai files open as PDFs when Illustrator saved them PDF-compatible (T12); the Open dialog list (Merge keeps its own: no TIFF there).
+export const OPEN_EXTS = ['pdf', 'ai', 'tif', 'tiff'];
 export const NO_PDF_PART = "This .ai file has no PDF part. In Illustrator, save it again with 'Create PDF Compatible File' on.";
 
 export const isAi = (name) => /\.ai$/i.test(name);
+export const isTiff = (name) => /\.tiff?$/i.test(name); // T13: opened by tiff-doc.js, not pdf.js
 
 /** True when the PDF header is in the first 1024 bytes (it may follow a little junk). */
 export function hasPdfHeader(bytes) {

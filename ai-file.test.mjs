@@ -2,15 +2,21 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { OPEN_EXTS, NO_PDF_PART, isAi, hasPdfHeader } from './web/ai-file.js';
+import { OPEN_EXTS, NO_PDF_PART, isAi, isTiff, hasPdfHeader } from './web/ai-file.js';
 
 const bytes = (text) => new TextEncoder().encode(text);
 
-test('open dialog and merge accept pdf and ai', () => {
-  assert.deepEqual(OPEN_EXTS, ['pdf', 'ai']);
+test('open dialog accepts pdf, ai, tif and tiff', () => {
+  assert.deepEqual(OPEN_EXTS, ['pdf', 'ai', 'tif', 'tiff']);
   assert.equal(isAi('Logo.AI'), true);
   assert.equal(isAi('logo.ai.pdf'), false);
   assert.equal(isAi('ai'), false);
+  assert.deepEqual(['a.tif', 'B.TIFF', 'c.Tif', 'd.tif.pdf', 'e.tiffx', 'tif'].map(isTiff), [true, true, true, false, false, false]);
+});
+
+test('the installer associates .pdf only (an ai / tif / tiff entry would make V their default app)', () => {
+  const conf = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+  assert.deepEqual(conf.bundle.fileAssociations.flatMap((a) => a.ext), ['pdf']);
 });
 
 test('%PDF must be in the first 1024 bytes', () => {

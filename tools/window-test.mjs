@@ -9,6 +9,7 @@ import { basename, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PDFDocument, PDFName, StandardFonts } from 'pdf-lib';
 import { chromium } from 'playwright';
+import { makeTiff } from './tiff-fixture.mjs';
 
 const port = 9243;
 const endpoint = `http://127.0.0.1:${port}`;
@@ -493,6 +494,22 @@ try {
     await canvasesAfterSwitch(names[5]);
     await rendered(page, 1);
     assert.equal(await canvasesAfterSwitch(names[3]), 2, 'toggle on again: the tab left stays drawn');
+  });
+
+  await step('launch with a 2-page TIFF: both pages drawn, Open in D off, Ctrl+P prints 2 pages', async () => {
+    const tiff = join(root, 'scan.tif');
+    await writeFile(tiff, makeTiff([{ w: 300, h: 400, rgb: [20, 60, 160] }, { w: 400, h: 300, gray: 50, packBits: true }]));
+    await launch(exe, tiff);
+    await page.getByRole('tab', { selected: true }).getByText('scan.tif', { exact: true }).waitFor();
+    await until("#count is '2'", async () => await page.locator('#count').textContent() === '2');
+    await rendered(page, 1);
+    await rendered(page, 2);
+    assert.equal(await page.locator('#open-in-d').isDisabled(), true);
+    const before = await page.evaluate(() => window.printCalls);
+    await page.keyboard.press('Control+p');
+    await until('window.print called', () => page.evaluate((n) => window.printCalls === n + 1, before));
+    assert.equal(await page.locator('#print-root img').count(), 2);
+    await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
   });
 
   if (timingPdf) await step('time viewer with --pdf', async () => {

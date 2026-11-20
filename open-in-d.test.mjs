@@ -8,6 +8,12 @@ test('Open in Project D requires an active tab with a disk path', () => {
   assert.equal(canOpenInD({ name: 'dropped.pdf', doc: {} }), false);
 });
 
+test('Open in Project D is off for a .tif / .tiff tab (D cannot open TIFF yet); .ai stays on', () => {
+  assert.equal(canOpenInD({ path: 'C:\\Scans\\plan.tif' }), false);
+  assert.equal(canOpenInD({ path: 'C:\\Scans\\plan.TIFF' }), false);
+  assert.equal(canOpenInD({ path: 'C:\\Art\\logo.ai' }), true);
+});
+
 test('Open in Project D shortcut matches Ctrl+Shift+D only', () => {
   const shortcut = { key: 'D', ctrlKey: true, shiftKey: true };
   assert.equal(isOpenInDShortcut(shortcut), true);

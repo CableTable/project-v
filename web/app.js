@@ -161,7 +161,7 @@ $('print').onclick = () => print.start(activeTab(tabs)?.doc);
 
 async function pickFile() {
   if (!tauri) return;
-  const path = await tauri.dialog.open({ filters: [{ name: 'PDF or AI', extensions: OPEN_EXTS }] }); // null when cancelled
+  const path = await tauri.dialog.open({ filters: [{ name: 'PDF, AI or TIFF', extensions: OPEN_EXTS }] }); // null when cancelled
   if (path) openAll([fromPath(path)]);
 }
 $('open').onclick = $('open2').onclick = pickFile;

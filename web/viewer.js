@@ -6,10 +6,11 @@ import { buildPageLists, THUMB_W } from './page-lists.js';
 import { keepList } from './keep.js';
 import { horizontalWheel, wheelLine } from './wheel.js';
 import { pressAction, selectedText } from './text-select.js';
-import { isAi, hasPdfHeader, NO_PDF_PART } from './ai-file.js';
+import { isAi, isTiff, hasPdfHeader, NO_PDF_PART } from './ai-file.js';
 
-// pdf.js is loaded on demand, so cold start does not parse its 400 KB.
+// pdf.js is loaded on demand, so cold start does not parse its 400 KB; the TIFF decoder too (T13).
 const loadPdfjs = () => import('./vendor/pdfjs/pdf.min.mjs');
+const loadTiff = () => import('./tiff-doc.js');
 const WHEEL_ZOOM = 1.1, KEY_ZOOM = 1.25, SIZE_BATCH = 50;
 const $ = (id) => document.getElementById(id);
 const view = $('view'), pages = $('pages'), thumbs = $('thumbs'), pageBox = $('page');
@@ -21,9 +22,28 @@ pages.style.setProperty('--gap', GAP + 'px');
 pages.style.setProperty('--pad', PAD + 'px');
 thumbs.style.setProperty('--tw', THUMB_W + 'px');
 
-/** Opens a PDF from its bytes and returns its handle (not on screen until show(handle)). Throws Error('<name>: <why>') for a broken or password file. */
+/** Opens a PDF (or a .tif / .tiff, T13) from its bytes and returns its handle (not on screen until show(handle)). Throws Error('<name>: <why>') for a broken or password file. */
 export async function openPdf(name, bytes) {
   if (isAi(name) && !hasPdfHeader(bytes)) throw new Error(`${name}: ${NO_PDF_PART}`);
+  const { pdf, TextLayer } = isTiff(name) ? { pdf: (await loadTiff()).openTiff(name, bytes), TextLayer: null } : await loadPdf(name, bytes);
+  const pageSize = async (i) => { const v = (await pdf.getPage(i + 1)).getViewport({ scale: 1 }); return { w: v.width, h: v.height }; };
+  let sizes, doc;
+  try {
+    // Page 1 first: until the other sizes are read every page is laid out like it.
+    const first = await pageSize(0);
+    sizes = Array.from({ length: pdf.numPages }, () => first);
+    doc = makeDoc(name, sizes);
+  } catch (e) { pdf.destroy(); throw new Error(`${name}: damaged PDF (${e?.message || e})`); }
+  const t = { pdf, doc, zoom: 1, fit: null, lay: layout(doc, 1), live: new Map(), liveThumbs: new Map(), slots: [], thumbEls: [], sel: -1, closed: false, io: null, scrollTop: 0, scrollLeft: 0, changedAt: -Infinity, repaintTimer: null,
+    TextLayer, find: { open: false, query: '', result: null, reveal: null } };
+  build(t);
+  sizeSlots(t);
+  readSizes(t, sizes, pageSize);
+  return t;
+}
+
+/** pdf.js: the document and its TextLayer class. */
+async function loadPdf(name, bytes) {
   const pdfjs = await loadPdfjs();
   pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdfjs/pdf.worker.min.mjs', import.meta.url).href;
   const task = pdfjs.getDocument({ data: bytes });
@@ -34,20 +54,7 @@ export async function openPdf(name, bytes) {
     const why = e?.name === 'InvalidPDFException' ? 'not a valid PDF' : e?.name === 'PasswordException' ? 'needs a password (not supported yet)' : e?.message || e;
     throw new Error(`${name}: ${why}`);
   }
-  const pageSize = async (i) => { const v = (await pdf.getPage(i + 1)).getViewport({ scale: 1 }); return { w: v.width, h: v.height }; };
-  let sizes, doc;
-  try {
-    // Page 1 first: until the other sizes are read every page is laid out like it.
-    const first = await pageSize(0);
-    sizes = Array.from({ length: pdf.numPages }, () => first);
-    doc = makeDoc(name, sizes);
-  } catch (e) { pdf.destroy(); throw new Error(`${name}: damaged PDF (${e?.message || e})`); }
-  const t = { pdf, doc, zoom: 1, fit: null, lay: layout(doc, 1), live: new Map(), liveThumbs: new Map(), slots: [], thumbEls: [], sel: -1, closed: false, io: null, scrollTop: 0, scrollLeft: 0, changedAt: -Infinity, repaintTimer: null,
-    TextLayer: pdfjs.TextLayer, find: { open: false, query: '', result: null, reveal: null } };
-  build(t);
-  sizeSlots(t);
-  readSizes(t, sizes, pageSize);
-  return t;
+  return { pdf, TextLayer: pdfjs.TextLayer };
 }
 
 /** Puts a handle on screen (null: the empty state). The one leaving keeps its scroll and zoom; its big page canvases are freed,
@@ -60,7 +67,10 @@ export function show(t) {
     cur.scrollTop = view.scrollTop;
     cur.scrollLeft = view.scrollLeft;
     if (instant) for (const live of [cur.live, cur.liveThumbs]) settle(live);
-    else for (const i of [...cur.live.keys()]) drop(cur.live, i, cur.slots[i]);
+    else {
+      for (const i of [...cur.live.keys()]) drop(cur.live, i, cur.slots[i]);
+      cur.pdf.freePixels?.(); // a TIFF's decoded pages (T13)
+    }
   }
   cur = t;
   if (!t) return showEmpty();
@@ -102,6 +112,7 @@ function settle(live) {
 function freeTab(t) {
   for (const i of [...t.live.keys()]) drop(t.live, i, t.slots[i]);
   for (const i of [...t.liveThumbs.keys()]) drop(t.liveThumbs, i, t.thumbEls[i].firstChild);
+  t.pdf.freePixels?.(); // a TIFF's decoded pages (T13)
 }
 
 function showEmpty() {
@@ -192,7 +203,7 @@ async function paint(t, live, i, slot, scale) {
     live.set(i, drawn);
     slot.replaceChildren(canvas);
     if (live === t.live) {
-      paintFindLayer(t, drawn, i); // T17: every drawn page gets its (selectable) text layer back, also after a zoom
+      if (t.TextLayer) paintFindLayer(t, drawn, i); // T17: every drawn page gets its (selectable) text layer back, also after a zoom; a TIFF has none (T13)
       refreshFind();
     }
   } catch (e) {

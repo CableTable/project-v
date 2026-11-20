@@ -30,13 +30,15 @@ fn grant_launch_paths(paths: &[PathBuf], mut allow: impl FnMut(&Path)) {
     }
 }
 
-/// Only an existing absolute .pdf or .ai file may get an fs scope grant.
+/// Only an existing absolute .pdf, .ai, .tif or .tiff file may get an fs scope grant.
 fn grantable(path: &Path) -> bool {
     path.is_absolute()
         && path.is_file()
-        && path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("pdf") || e.eq_ignore_ascii_case("ai"))
+        && path.extension().is_some_and(|e| {
+            ["pdf", "ai", "tif", "tiff"]
+                .iter()
+                .any(|ok| e.eq_ignore_ascii_case(ok))
+        })
 }
 
 #[tauri::command]
@@ -179,12 +181,16 @@ mod tests {
         assert!(grantable(&temp_file("b.PDF")));
         assert!(grantable(&temp_file("c.ai")));
         assert!(grantable(&temp_file("d.AI")));
+        assert!(grantable(&temp_file("e.tif")));
+        assert!(grantable(&temp_file("f.TIFF")));
     }
 
     #[test]
     fn other_extensions_are_refused() {
         assert!(!grantable(&temp_file("a.pdf.exe")));
         assert!(!grantable(&temp_file("a.ai.exe")));
+        assert!(!grantable(&temp_file("a.tif.exe")));
+        assert!(!grantable(&temp_file("a.tiffx")));
         assert!(!grantable(&temp_file("a.eps")));
         assert!(!grantable(&temp_file("a.txt")));
         assert!(!grantable(&temp_file("noext")));

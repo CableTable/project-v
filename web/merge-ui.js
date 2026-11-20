@@ -3,9 +3,9 @@ import {
   moveUp, pageRange, pagesByFile, removeFile, replacePageRange, rotatePage, setFilePages, sortFiles,
 } from './merge.js';
 
-import { OPEN_EXTS, NO_PDF_PART, isAi, hasPdfHeader } from './ai-file.js';
+import { NO_PDF_PART, isAi, hasPdfHeader } from './ai-file.js';
 
-const filters = [{ name: 'PDF or AI', extensions: OPEN_EXTS }];
+export const filters = [{ name: 'PDF or AI', extensions: ['pdf', 'ai'] }]; // not OPEN_EXTS: a TIFF cannot be merged (T13)
 export const saveFilters = [{ name: 'PDF', extensions: ['pdf'] }]; // the merged file is always a .pdf
 const el = (tag, text = '') => Object.assign(document.createElement(tag), { textContent: text });
 const button = (text, run) => Object.assign(el('button', text), { type: 'button', onclick: run });

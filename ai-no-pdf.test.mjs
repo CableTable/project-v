@@ -6,7 +6,7 @@ import { NO_PDF_PART } from './web/ai-file.js';
 const made = [];
 function fakeEl(tag) {
   const e = {
-    tag, textContent: '', children: [], style: { setProperty() {} }, dataset: {},
+    tag, textContent: '', children: [], style: { setProperty() {} }, dataset: {}, get firstChild() { return this.children[0]; },
     append(...c) { this.children.push(...c); }, replaceChildren(...c) { this.children = c; },
     setAttribute() {}, focus() {}, contains: () => false, close() { this.open = false; },
     showModal() { this.open = true; }, addEventListener() {}, classList: { add() {}, remove() {}, toggle() {} },
@@ -22,12 +22,18 @@ globalThis.addEventListener = globalThis.removeEventListener = () => {}; // wind
 globalThis.IntersectionObserver = globalThis.ResizeObserver = class { observe() {} unobserve() {} };
 
 const { openPdf } = await import('./web/viewer.js');
-const { createMergeWindow, saveFilters } = await import('./web/merge-ui.js');
+const { createMergeWindow, saveFilters, filters } = await import('./web/merge-ui.js');
+const { pressAction } = await import('./web/text-select.js');
+const { makeTiff } = await import('./tools/tiff-fixture.mjs');
 
 const noPdf = new TextEncoder().encode('%!PS-Adobe-3.0 EPSF-3.0\n%%Creator: Adobe Illustrator');
 
 test('Merge Save dialog offers .pdf only', () => {
   assert.deepEqual(saveFilters, [{ name: 'PDF', extensions: ['pdf'] }]);
+});
+
+test('Merge Add files picker offers .pdf and .ai, no .tif / .tiff', () => {
+  assert.deepEqual(filters, [{ name: 'PDF or AI', extensions: ['pdf', 'ai'] }]);
 });
 
 test('viewer openPdf: an .ai with no %PDF gives the NO_PDF_PART message', async () => {
@@ -41,4 +47,16 @@ test('Merge load: an .ai with no %PDF shows the NO_PDF_PART message on its card'
   const errors = made.filter((e) => e.textContent.includes(NO_PDF_PART));
   assert.equal(errors.length, 1);
   assert.equal(errors[0].textContent, `logo.ai: ${NO_PDF_PART}`);
+});
+
+// Last: its page lists add elements with number textContent to `made`.
+test('viewer openPdf: a .tif opens as a tab of its pages with no text layer, so a drag on a page pans', async () => {
+  const t = await openPdf('scan.TIF', makeTiff([{ w: 96, h: 96, gray: 0 }, { w: 192, h: 96, gray: 0 }]));
+  assert.equal(t.pdf.numPages, 2);
+  assert.deepEqual(t.doc.pages.map(({ w, h }) => [w, h]), [[72, 72], [72, 72]]); // page 1 first; page 2's own size follows
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(t.doc.pages.map(({ w, h }) => [w, h]), [[72, 72], [144, 72]]);
+  assert.equal(t.TextLayer, null);
+  assert.equal(pressAction(10, 10, []), 'pan'); // no text spans on a TIFF page
+  await assert.rejects(openPdf('junk.tiff', noPdf), { message: "junk.tiff: this TIFF can't be read (not a TIFF file)." });
 });
