@@ -39,8 +39,10 @@ input.fld{font:inherit;color:inherit;min-width:0;width:3ch;box-sizing:content-bo
 #pages{display:flex;flex-direction:column;align-items:center;gap:var(--gap);padding:var(--pad);box-sizing:border-box;width:max-content;min-width:100%}
 .pg{position:relative;overflow:hidden;flex:none;background:#fff;box-shadow:0 1px 4px #0006}
 .pg canvas,.tp canvas{display:block;width:100%;height:100%}
-.find-text-layer{position:absolute;top:0;left:0;line-height:1;text-size-adjust:none;transform-origin:0 0;pointer-events:none}
-.find-text-layer span,.find-text-layer br{position:absolute;color:transparent;white-space:pre;transform-origin:0 0}
+/* T17: the text layer is on every drawn page and selectable; a press off the text pans the view (viewer.js) */
+#view{cursor:grab}#view.panning{cursor:grabbing}
+.find-text-layer{position:absolute;top:0;left:0;line-height:1;text-size-adjust:none;transform-origin:0 0;user-select:text}
+.find-text-layer span,.find-text-layer br{position:absolute;color:transparent;white-space:pre;transform-origin:0 0;cursor:text}
 .find-text-layer[data-main-rotation="90"]{transform:rotate(90deg) translateY(-100%)}
 .find-text-layer[data-main-rotation="180"]{transform:rotate(180deg) translate(-100%,-100%)}
 .find-text-layer[data-main-rotation="270"]{transform:rotate(270deg) translateX(-100%)}

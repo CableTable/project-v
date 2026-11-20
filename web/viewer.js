@@ -5,6 +5,7 @@ import { rangesForHits, textNodes } from './find-layer.js';
 import { buildPageLists, THUMB_W } from './page-lists.js';
 import { keepList } from './keep.js';
 import { horizontalWheel, wheelLine } from './wheel.js';
+import { pressAction, selectedText } from './text-select.js';
 
 // pdf.js is loaded on demand, so cold start does not parse its 400 KB.
 const loadPdfjs = () => import('./vendor/pdfjs/pdf.min.mjs');
@@ -13,7 +14,7 @@ const $ = (id) => document.getElementById(id);
 const view = $('view'), pages = $('pages'), thumbs = $('thumbs'), pageBox = $('page');
 const dpr = () => Math.min(window.devicePixelRatio || 1, 2); // 2x sharpness is enough; more costs memory per canvas
 
-let cur = null, side = true, queued = false, wheelLog = null;
+let cur = null, side = true, queued = false, wheelLog = null, selecting = false;
 let instant = true, kept = []; // T15: with `instant` on, `kept` (most recent first, `cur` included) are the 5 handles whose drawn pages stay while in the background
 pages.style.setProperty('--gap', GAP + 'px');
 pages.style.setProperty('--pad', PAD + 'px');
@@ -185,9 +186,13 @@ async function paint(t, live, i, slot, scale) {
     await render.task.promise;
     if (!active()) return;
     rec.layer?.cancel();
-    live.set(i, { scale, page });
+    const drawn = { scale, page };
+    live.set(i, drawn);
     slot.replaceChildren(canvas);
-    if (live === t.live) refreshFind();
+    if (live === t.live) {
+      paintFindLayer(t, drawn, i); // T17: every drawn page gets its (selectable) text layer back, also after a zoom
+      refreshFind();
+    }
   } catch (e) {
     if (active()) {
       rec.pending = null;
@@ -205,20 +210,21 @@ function cancelPending(rec) {
 function cancelPaint(rec) { cancelPending(rec); rec?.layer?.cancel(); }
 function drop(live, i, slot) { cancelPaint(live.get(i)); live.delete(i); slot.replaceChildren(); }
 
+/** The page's transparent pdf.js text layer: Find highlights draw on it and (T17) text is selected on it. */
 async function paintFindLayer(t, rec, i) {
-  rec.textRequested = true;
   try {
     const content = await rec.page.getTextContent();
     if (t.live.get(i) !== rec) return;
     const viewport = rec.page.getViewport({ scale: t.zoom * PX_PER_PT });
     const container = document.createElement('div');
     container.className = 'find-text-layer';
-    container.setAttribute('aria-hidden', 'true');
     rec.layer = new t.TextLayer({ container, viewport, textContentSource: content });
     await rec.layer.render();
     if (t.live.get(i) !== rec) return;
     t.slots[i].append(container);
     rec.nodes = textNodes(content.items, rec.layer.textDivs);
+    rec.items = content.items.filter((item) => typeof item.str === 'string'); // one text div each, in order (as textNodes)
+    rec.divs = rec.layer.textDivs;
     rec.layer = null;
     refreshFind();
   } catch (error) {
@@ -246,7 +252,6 @@ function refreshFind() {
   for (const [i, rec] of t.live) {
     const hits = result.byPage.get(i);
     if (!hits || !rec.page) continue;
-    if (!rec.textRequested) paintFindLayer(t, rec, i);
     if (!rec.nodes) continue;
     if (rec.hits !== hits) {
       rec.hits = hits;
@@ -309,7 +314,7 @@ function update(defer = false) {
   const [first, last] = visibleRange(t.lay, scrollTop, clientHeight);
   let dropped = false;
   for (const i of t.live.keys()) {
-    if (i >= first && i <= last) continue;
+    if ((i >= first && i <= last) || selecting) continue; // T17: a selection being dragged keeps its pages (and their text)
     drop(t.live, i, t.slots[i]);
     dropped = true;
   }
@@ -422,4 +427,45 @@ view.addEventListener('scroll', () => {
   queued = true;
   requestAnimationFrame(() => { queued = false; update(); });
 });
+
+// T17: a left press on text (or a gap inside a text line) selects natively; anywhere else in the view it drags the view (pan).
+view.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || !cur) return;
+  const r = view.getBoundingClientRect();
+  if (e.clientX - r.left >= view.clientWidth || e.clientY - r.top >= view.clientHeight) return; // a scrollbar: native
+  const spans = e.target.closest('.pg')?.querySelectorAll('.find-text-layer span:not(.markedContent)') ?? [];
+  if (pressAction(e.clientX, e.clientY, Array.from(spans, (s) => s.getBoundingClientRect())) === 'select') { selecting = true; return; }
+  e.preventDefault(); // no selection starts, and none is dragged
+  getSelection().removeAllRanges(); // a click on empty space clears the selection
+  view.focus({ preventScroll: true });
+  const x = e.clientX + view.scrollLeft, y = e.clientY + view.scrollTop;
+  const move = (m) => { view.scrollLeft = x - m.clientX; view.scrollTop = y - m.clientY; };
+  const end = () => { view.classList.remove('panning'); removeEventListener('mousemove', move); removeEventListener('mouseup', end); };
+  view.classList.add('panning');
+  addEventListener('mousemove', move);
+  addEventListener('mouseup', end);
+});
+addEventListener('mouseup', () => {
+  if (!selecting) return;
+  selecting = false;
+  update(); // drop the pages kept during the drag
+});
+
+// T17: Ctrl+C on a selection in the page view copies its plain text (line and page ends -> "\n"); elsewhere (Find box, ⚙ log path) native copy.
+document.addEventListener('copy', (e) => {
+  const s = getSelection(), range = s.rangeCount ? s.getRangeAt(0) : null;
+  if (!cur || !range || range.collapsed || !view.contains(range.commonAncestorContainer)) return;
+  const pages = [...cur.live].sort((a, b) => a[0] - b[0]).map(([, rec]) =>
+    (rec.items ?? []).map(({ str, hasEOL }, k) => ({ str, hasEOL, sel: selectedPart(range, rec.divs[k]?.firstChild) })));
+  const text = selectedText(pages);
+  if (!text) return;
+  e.preventDefault();
+  e.clipboardData.setData('text/plain', text);
+});
+/** [start, end] of a text node's part inside the range, or null. */
+function selectedPart(range, node) {
+  if (!node || range.comparePoint(node, node.length) < 0 || range.comparePoint(node, 0) > 0) return null;
+  const start = range.startContainer === node ? range.startOffset : 0, end = range.endContainer === node ? range.endOffset : node.length;
+  return start < end ? [start, end] : null;
+}
 new ResizeObserver(() => { if (cur) cur.fit ? applyFit() : update(true); }).observe(view);
