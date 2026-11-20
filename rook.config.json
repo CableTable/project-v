@@ -10,6 +10,7 @@
   "folders": {
     "bishop": { "review": "project-v-bishop", "build": "project-v-bishop" },
     "king": { "review": "project-v-king2", "build": "project-v-king" },
-    "knight": "project-v-knight"
+    "knight": "project-v-knight",
+    "rook": { "review": "project-v-knight", "build": "project-v-knight" }
   }
 }
