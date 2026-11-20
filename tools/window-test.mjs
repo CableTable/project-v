@@ -57,12 +57,13 @@ function checkPort() {
   });
 }
 
-async function fixture(path, pages) {
+// `landscape`: the page numbers (1-based) that are drawn 360 x 288 pt instead of 288 x 360.
+async function fixture(path, pages, landscape = []) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   for (let n = 1; n <= pages; n++) {
-    const page = pdf.addPage([288, 360]);
-    page.drawText(`lorem page ${n}`, { x: 30, y: 310, size: 20, font });
+    const wide = landscape.includes(n), page = pdf.addPage(wide ? [360, 288] : [288, 360]);
+    page.drawText(`lorem page ${n}`, { x: 30, y: wide ? 238 : 310, size: 20, font });
   }
   await writeFile(path, await pdf.save());
   return path;
@@ -228,7 +229,7 @@ try {
     return { exe: path, timingPdf };
   });
 
-  const [first, second, large] = await step('generate PDF fixtures', async () => {
+  const [first, second, large, mixed] = await step('generate PDF fixtures', async () => {
     root = await mkdtemp(join(tmpdir(), 'project-v-window-'));
     const input = join(root, 'in');
     await mkdir(input);
@@ -237,6 +238,7 @@ try {
       await fixture(join(input, 'first.pdf'), 1),
       await fixture(join(input, 'second.PDF'), 2),
       await fixture(join(root, '1000-pages.pdf'), 1000),
+      await fixture(join(input, 'mixed.pdf'), 3, [2]),
     ];
   });
 
@@ -332,6 +334,50 @@ try {
     await page.locator('body[data-v-pick="1"]').waitFor();
   });
 
+  await step('Ctrl+P prints one img per page, 1:1, portrait and landscape; afterprint frees them', async () => {
+    await launch(exe, mixed);
+    await page.getByRole('tab', { selected: true }).getByText(basename(mixed), { exact: true }).waitFor();
+    await rendered(page, 1);
+    await page.evaluate(() => { window.printCalls = 0; window.print = () => { window.printCalls++; }; });
+    const imgCount = () => page.locator('#print-root img').count();
+
+    await page.locator('#merge').click();
+    const dialog = page.getByRole('dialog', { name: 'Merge PDFs' });
+    await dialog.waitFor();
+    assert(await dialog.evaluate((el) => {
+      const event = new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    }), 'Ctrl+P in the Merge dialog must be prevented');
+    assert.equal(await imgCount(), 0);
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+
+    for (const press of [() => page.keyboard.press('Control+p'), () => page.locator('#print').click()]) {
+      const before = await page.evaluate(() => window.printCalls);
+      await press();
+      await until('window.print called', () => page.evaluate((n) => window.printCalls === n + 1, before));
+      const sheets = await page.locator('#print-root img').evaluateAll((imgs) => imgs.map((img) => {
+        const style = getComputedStyle(img);
+        return { w: Math.round(parseFloat(style.width) * 0.75), h: Math.round(parseFloat(style.height) * 0.75), px: [img.naturalWidth, img.naturalHeight], src: img.src };
+      }));
+      assert.deepEqual(sheets.map(({ w, h }) => [w, h]), [[288, 360], [360, 288], [288, 360]]);
+      assert.deepEqual(sheets.map(({ px }) => px), [[1200, 1500], [1500, 1200], [1200, 1500]]); // 300 dpi
+      const css = await page.evaluate(() => [...document.head.querySelectorAll('style')].map((s) => s.textContent).join('\n'));
+      assert.match(css, /@page p0\{size:288pt 360pt;margin:0\}/);
+      assert.match(css, /@page p1\{size:360pt 288pt;margin:0\}/);
+      await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+      assert.equal(await imgCount(), 0);
+      // the CSP allows img-src blob: but not fetch(blob:), so a revoked URL is told by an <img> that no longer loads
+      assert.equal(await page.evaluate((src) => new Promise((done) => {
+        const img = new Image();
+        img.onload = () => done('open');
+        img.onerror = () => done('revoked');
+        img.src = src;
+      }), sheets[0].src), 'revoked');
+    }
+  });
+
   await step('open a 1000-page PDF', async () => {
     const start = performance.now();
     await launch(exe, large);
@@ -374,6 +420,22 @@ try {
     await page.waitForFunction(() => document.querySelector('#view').scrollLeft === 80);
     await view.dispatchEvent('wheel', { deltaY: 3, deltaMode: 1, shiftKey: true, cancelable: true, bubbles: true });
     await page.waitForFunction(() => document.querySelector('#view').scrollLeft === 128);
+  });
+
+  await step('print over 100 pages is 150 dpi; Esc and a tab switch cancel preparing', async () => {
+    const msgs = page.locator('#msgs'), calls = () => page.evaluate(() => window.printCalls);
+    const printsBefore = await calls();
+    for (const cancel of [() => page.keyboard.press('Escape'), () => page.locator('#tabs .tab:not(.on) .tl').first().click()]) {
+      await page.keyboard.press('Control+p');
+      await msgs.getByText(/^Preparing print \d+ \/ 1000, 150 dpi \(over 100 pages\)$/).waitFor();
+      await cancel();
+      await msgs.getByText('Print cancelled').waitFor();
+      assert.equal(await page.locator('#print-root img').count(), 0);
+      assert.equal(await msgs.getByText(/^Preparing print/).count(), 0);
+      await msgs.getByRole('button', { name: 'Dismiss' }).click();
+      await page.getByRole('tab').getByText(basename(large), { exact: true }).click(); // back to the 1000 pages
+    }
+    assert.equal(await calls(), printsBefore);
   });
 
   if (timingPdf) await step('time viewer with --pdf', async () => {

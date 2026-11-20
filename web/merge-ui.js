@@ -394,7 +394,10 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult }) {
     event.dataTransfer.dropEffect = busy ? 'none' : dragged ? 'move' : 'copy';
   };
   dialog.oncancel = (event) => { event.preventDefault(); if (!busy) close(); };
-  dialog.onkeydown = (event) => event.stopPropagation();
+  dialog.onkeydown = (event) => {
+    event.stopPropagation();
+    if (event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'p') event.preventDefault(); // no print from here, and not the app UI either
+  };
   dialog.addEventListener('wheel', (event) => {
     if (event.ctrlKey) { event.preventDefault(); event.stopPropagation(); }
   }, { passive: false });

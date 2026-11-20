@@ -55,3 +55,14 @@ input.fld{font:inherit;color:inherit;min-width:0;width:3ch;box-sizing:content-bo
 .tab:hover .tx,.tab.on .tx{color:var(--text)}
 #msgs div{display:flex;gap:8px;align-items:center;padding:4px 10px;background:var(--sel);border-bottom:1px solid var(--line)}
 #msgs span{flex:1}
+/* printing (T11): only #print-root (one .pp > img per PDF page, filled by print-ui.js, which also writes one @page pN per page size) is printed */
+#print-root{display:none}
+@media print{
+  html,body{height:auto;background:#fff}
+  body{display:block}
+  body>*:not(#print-root){display:none!important}
+  #print-root{display:block}
+  .pp{break-inside:avoid}
+  .pp:not(:last-child){break-after:page}
+  .pp img{display:block}
+}

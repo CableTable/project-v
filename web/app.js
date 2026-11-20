@@ -5,6 +5,7 @@ import { createMergeWindow } from './merge-ui.js';
 import { createRecentFiles } from './recent-ui.js';
 import { showFind } from './find-ui.js';
 import { canOpenInD, isOpenInDShortcut } from './open-in-d.js';
+import { createPrint } from './print-ui.js';
 
 const tauri = window.__TAURI__;
 const $ = (id) => document.getElementById(id);
@@ -12,11 +13,16 @@ const baseName = (path) => path.split(/[\\/]/).pop();
 const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text ?? '' });
 
 let tabs = emptyTabs(), notes = []; // notes: lines that belong to no tab; a failed file's message is its tab's `error`
+const printRow = el('div', ''); // "Preparing print i / n": kept across render() so each page only sets its text
+printRow.hidden = true;
+const print = createPrint({ status: (text) => { printRow.textContent = text ?? ''; printRow.hidden = !text; }, say: (text) => say(text) });
 
 /** Shows the active tab (the empty state for none, or for a file that failed to open), the strip and the message lines. */
 function render() {
   const now = activeTab(tabs);
+  print.cancel((doc) => doc !== now?.doc); // switching tabs stops a print that is still being prepared
   $('open-in-d').disabled = !canOpenInD(now);
+  $('print').disabled = !now?.doc;
   showFind(now?.doc ?? null);
   show(now?.doc ?? null);
   const strip = $('tabs');
@@ -42,14 +48,17 @@ function render() {
     x.onclick = () => { if (tab) tabs = patchTab(tabs, tab, { error: null }); else notes = notes.filter((n) => n !== text); render(); };
     row.append(el('span', '', text), x); // text comes from files and the OS: textContent only
     return row;
-  }));
+  }), printRow);
 }
 
 function close(id) {
   const t = tabs.list.find((x) => x.id === id);
   if (!t) return;
   tabs = closeTab(tabs, id);
-  if (t.doc) closeDoc(t.doc); // frees its pdf.js document
+  if (t.doc) {
+    print.cancel((doc) => doc === t.doc); // before the pdf.js document is destroyed
+    closeDoc(t.doc); // frees its pdf.js document
+  }
   render();
 }
 
@@ -68,7 +77,10 @@ function openAll(items, replaceExisting = false) {
       else {
         if (have) {
           tabs = closeTab(tabs, have.id);
-          if (have.doc) closeDoc(have.doc);
+          if (have.doc) {
+            print.cancel((doc) => doc === have.doc);
+            closeDoc(have.doc);
+          }
         }
         let doc = null, error = null;
         try { doc = await openPdf(name, await read()); }
@@ -127,6 +139,7 @@ async function openInD() {
   }
 }
 $('open-in-d').onclick = openInD;
+$('print').onclick = () => print.start(activeTab(tabs)?.doc);
 
 async function pickFile() {
   if (!tauri) return;
@@ -142,6 +155,7 @@ document.addEventListener('keydown', (e) => {
   else if (isOpenInDShortcut(e)) { e.preventDefault(); openInD(); }
   else if (k === 'tab') { e.preventDefault(); tabs = cycle(tabs, e.shiftKey ? -1 : 1); render(); }
   else if (k === 'w' && !e.shiftKey) { e.preventDefault(); if (now) close(now.id); }
+  else if (k === 'p') { e.preventDefault(); print.start(now?.doc); } // always: else WebView2 prints the app UI
 });
 document.addEventListener('dragover', (e) => e.preventDefault()); // without this the drop is refused
 document.addEventListener('drop', (e) => {
