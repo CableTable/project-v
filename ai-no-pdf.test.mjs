@@ -18,6 +18,7 @@ globalThis.document = {
   createElement: fakeEl, createTextNode: (t) => ({ textContent: t }), getElementById: () => fakeEl('x'),
   addEventListener() {}, head: fakeEl('head'), body: fakeEl('body'),
 };
+globalThis.addEventListener = globalThis.removeEventListener = () => {}; // window listeners viewer.js adds at load (T17)
 globalThis.IntersectionObserver = globalThis.ResizeObserver = class { observe() {} unobserve() {} };
 
 const { openPdf } = await import('./web/viewer.js');
