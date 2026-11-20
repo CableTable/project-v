@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Main window: core, destroy (Close all after the close-request box), Open and Save dialogs, and file access scoped to dialog selections, launch paths and recent files.",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-destroy","dialog:allow-open", "fs:allow-read-file", "dialog:allow-save", "fs:allow-write-file"]
+  "permissions": ["core:default", "core:window:allow-destroy", "dialog:allow-open", "fs:allow-read-file", "dialog:allow-save", "fs:allow-write-file"]
 }
