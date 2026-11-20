@@ -9,9 +9,13 @@ globalThis.ImageData = class { constructor(data, width, height) { Object.assign(
 globalThis.createImageBitmap = async (img) => ({ img, close() { this.closed = true; } });
 const fakeContext = () => ({ draws: [], texts: [], drawImage(bmp, x, y, w, h) { this.draws.push({ bmp, x, y, w, h }); }, fillRect() {}, fillText(text) { this.texts.push(text); } });
 
-let decodes = 0;
+let decodes = 0, failNext = false;
 const decodeImage = UTIF.decodeImage;
-UTIF.decodeImage = (...args) => { decodes++; return decodeImage(...args); };
+UTIF.decodeImage = (...args) => {
+  decodes++;
+  if (failNext) { failNext = false; throw new Error('broken strip'); }
+  return decodeImage(...args);
+};
 
 const scan = () => makeTiff([
   { w: 400, h: 200, rgb: [200, 30, 10], dpi: [200, 200] }, // 2 x 1 in
@@ -86,6 +90,51 @@ test('TIFF doc: two renders of one Deflate page at once decode it once; UTIF.inf
   assert.equal(UTIF.inflated.size, 0);
   await draw();
   assert.equal(decodes, 1, 'then cached');
+});
+
+const drawer = (doc) => async (n) => { const page = await doc.getPage(n); await page.render({ canvasContext: fakeContext(), viewport: page.getViewport({ scale: 1 }) }).promise; };
+const inFlight = async (doc) => { for (let k = 0; k < 50 && !doc.inflight.size; k++) await null; assert.equal(doc.inflight.size, 1, 'a decode is in flight'); };
+
+test('TIFF doc: the in-flight map is empty after a page finishes, fails and is freed (uncompressed and Deflate)', async () => {
+  for (const deflate of [undefined, 8]) {
+    const good = { w: 8, h: 8, gray: 9, deflate }, doc = openTiff('m.tif', makeTiff([good, good])), draw = drawer(doc);
+    await draw(1);
+    assert.equal(doc.inflight.size, 0, `finished, deflate ${deflate}`);
+    const warn = console.warn;
+    console.warn = () => {};
+    failNext = true; // page 2's decoder throws
+    try { await draw(2); } finally { console.warn = warn; }
+    assert.equal(doc.inflight.size, 0, `failed, deflate ${deflate}`);
+    doc.freePixels();
+    const late = draw(1);
+    await inFlight(doc);
+    doc.freePixels();
+    await late;
+    assert.equal(doc.inflight.size, 0, `freed, deflate ${deflate}`);
+  }
+});
+
+test('TIFF doc: an evicted uncompressed page drawn again decodes again; a decode overtaken by free() neither counts nor caches its page', async () => {
+  const one = 8 * 8 * 4, doc = openTiff('e.tif', makeTiff([{ w: 8, h: 8, gray: 1 }, { w: 8, h: 8, gray: 2 }, { w: 8, h: 8, gray: 3, deflate: 8 }]), 2 * one); // room for two pages
+  const draw = drawer(doc);
+  decodes = 0;
+  await draw(1);
+  await draw(2);
+  await draw(3); // evicts page 1
+  await draw(1);
+  assert.equal(decodes, 4, 'page 1 decoded again after eviction');
+  doc.freePixels();
+  const late = draw(3); // Deflate: still inflating when free() runs
+  await inFlight(doc);
+  doc.freePixels();
+  const again = draw(3);
+  await inFlight(doc);
+  await Promise.all([late, again]);
+  assert.equal(doc.inflight.size, 0);
+  assert.equal(decodes, 6);
+  await draw(1);
+  await draw(3);
+  assert.equal(decodes, 7, 'page 3 counted once: pages 3 and 1 both fit');
 });
 
 test('TIFF doc: a cancelled render rejects like pdf.js and draws nothing; destroy does not throw', async () => {

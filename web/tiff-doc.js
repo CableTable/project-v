@@ -28,7 +28,7 @@ function pageSize(ifd) {
 }
 
 /** Opens TIFF bytes. Throws Error('<name>: this TIFF can't be read (<why>).') for a file that is no TIFF, has no pages or a compression UTIF lacks. */
-export function openTiff(name, bytes) {
+export function openTiff(name, bytes, cacheBytes = CACHE_BYTES) {
   const head = String.fromCharCode(...bytes.subarray(0, 4));
   if (head !== 'II*\0' && head !== 'MM\0*') throw unreadable(name, 'not a TIFF file');
   const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength); // UTIF copies a typed array on every call, not a buffer
@@ -40,10 +40,11 @@ export function openTiff(name, bytes) {
   const odd = pages.find((ifd) => !DECODED.includes(ifd.t259?.[0] ?? 1));
   if (odd) throw unreadable(name, `compression ${odd.t259[0]} not supported`);
   const sizes = pages.map(pageSize), cache = new Map(), failed = new Map(), inflight = new Map();
-  let cached = 0;
+  let cached = 0, generation = 0; // generation: bumped by free(), so a decode that free() overtook neither counts nor caches its page
 
   /** RGBA of page i (0-based), decoded once; the most recently used pages stay. Throws (once logged) when the page cannot be decoded. */
   async function decode(i) {
+    const gen = generation;
     let rgba;
     try {
       if (pages[i].t256[0] * pages[i].t257[0] > MAX_PIXELS) throw new Error('over 268 million pixels');
@@ -57,9 +58,8 @@ export function openTiff(name, bytes) {
     } finally {
       delete pages[i].data; // the raw strips: only the RGBA is kept
       UTIF.inflated = new Map(); // the last page's inflated strips
-      inflight.delete(i);
     }
-    cached += rgba.length;
+    if (gen === generation) cached += rgba.length;
     return rgba;
   }
 
@@ -68,20 +68,21 @@ export function openTiff(name, bytes) {
     let rgba = cache.get(i);
     if (rgba) cache.delete(i);
     else {
-      if (!inflight.has(i)) inflight.set(i, decode(i));
-      rgba = await inflight.get(i);
+      const gen = generation, p = inflight.get(i) ?? inflight.set(i, decode(i)).get(i);
+      try { rgba = await p; } finally { if (inflight.get(i) === p) inflight.delete(i); } // here, not in decode: a decode that never awaits ends before the set
+      if (gen !== generation) return rgba; // freed while decoding: drawn, not cached
       cache.delete(i); // the second waiter re-adds it below without counting its bytes twice
     }
     cache.set(i, rgba);
     for (const [k, old] of cache) {
-      if (cached <= CACHE_BYTES || k === i) break;
+      if (cached <= cacheBytes || k === i) break;
       cache.delete(k);
       cached -= old.length;
     }
     return rgba;
   }
 
-  function free() { cache.clear(); inflight.clear(); cached = 0; }
+  function free() { cache.clear(); inflight.clear(); cached = 0; generation++; }
 
   async function getPage(n) {
     const { w, h } = sizes[n - 1], ifd = pages[n - 1];
@@ -117,5 +118,5 @@ export function openTiff(name, bytes) {
     };
   }
 
-  return { numPages: pages.length, getPage, freePixels: free, destroy: free };
+  return { numPages: pages.length, getPage, freePixels: free, destroy: free, inflight }; // inflight: read by the unit tests
 }
