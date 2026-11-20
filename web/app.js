@@ -7,6 +7,7 @@ import { createRecentFiles } from './recent-ui.js';
 import { showFind } from './find-ui.js';
 import { canOpenInD, isOpenInDShortcut } from './open-in-d.js';
 import { createPrint } from './print-ui.js';
+import { createCloseAsk } from './close-ask.js';
 
 const tauri = window.__TAURI__;
 const $ = (id) => document.getElementById(id);
@@ -124,7 +125,8 @@ function wheelLog(on) {
     setWheelLog((line) => write(line).catch((e) => console.warn('Wheel log', e)));
   }, (e) => { shown.textContent = `Could not write the wheel log: ${e}`; });
 }
-createSettings({ instantTabs: setInstantTabs, wheelLog });
+let askClose = true; // ⚙ "Ask before closing several tabs" (T16)
+createSettings({ instantTabs: setInstantTabs, wheelLog, askClose: (on) => { askClose = on; } });
 const remember = createRecentFiles({ tauri, open: (path) => openAll([fromPath(path)]), say });
 
 const merge = createMergeWindow({ tauri, fromPath, fromFile, openResult: (path) => openAll([fromPath(path)], true) });
@@ -185,4 +187,16 @@ if (tauri) {
     (e) => say(`Could not read the launch files: ${e}`));
   tauri.event.listen('open-launch-files', take);
   take();
+
+  // Title-bar X, Alt+F4, taskbar Close window (T16): with 2+ tabs the box asks first.
+  const win = tauri.window.getCurrentWindow();
+  win.onCloseRequested(createCloseAsk({
+    ask: () => askClose,
+    count: () => tabs.list.length,
+    api: {
+      exit: () => win.destroy().catch((e) => say(`Could not close the window: ${e}`)),
+      closeTab: () => { const now = activeTab(tabs); if (now) close(now.id); },
+      stopAsking: () => { const box = $('ask-close'); box.checked = false; box.dispatchEvent(new Event('change')); }, // saved by the ⚙ toggle
+    },
+  }));
 }

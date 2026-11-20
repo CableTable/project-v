@@ -1,10 +1,11 @@
 // settings-ui.js — the ⚙ menu: checkboxes remembered in localStorage. "Instant tab switching" (T15) is on unless saved off;
-// "Log wheel events" (T10) is off unless saved on.
+// "Log wheel events" (T10) is off unless saved on. "Ask before closing several tabs" (T16) is on unless saved off.
 
-export function createSettings({ instantTabs, wheelLog }) {
+export function createSettings({ instantTabs, wheelLog, askClose }) {
   const menu = document.getElementById('settings-menu');
   toggle('instant-tabs', 'v.instantTabs', true, instantTabs);
   toggle('wheel-log', 'v.wheelLog', false, wheelLog);
+  toggle('ask-close', 'v.askClose', true, askClose);
   document.addEventListener('click', (e) => { if (!menu.contains(e.target)) menu.open = false; });
   menu.onkeydown = (e) => {
     if (e.key !== 'Escape' || !menu.open) return;
