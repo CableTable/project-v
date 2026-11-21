@@ -8,7 +8,7 @@ export function pressAction(x, y, rects) {
     if (x >= r.left && x <= r.right) return 'select';
     if (r.right < x) { if (!l || r.right > l.right) l = r; } else if (!r2 || r.left < r2.left) r2 = r;
   }
-  return l && r2 && r2.left - l.right <= l.bottom - l.top ? 'select' : 'pan';
+  return l && r2 && r2.left - l.right <= Math.max(l.bottom - l.top, r2.bottom - r2.top) ? 'select' : 'pan';
 }
 
 /** pages: per page in order, its pdf.js string items with sel = [start, end] of the selected part or null.

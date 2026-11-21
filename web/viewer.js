@@ -441,7 +441,7 @@ view.addEventListener('scroll', () => {
   requestAnimationFrame(() => { queued = false; update(); });
 });
 
-// T17: a left press on text (or a gap inside a text line) selects natively; anywhere else in the view it drags the view (pan).
+// T17: a left press on text (or a word gap (no wider than the line height)) selects natively; anywhere else in the view it drags the view (pan).
 view.addEventListener('mousedown', (e) => {
   if (e.button !== 0 || !cur) return;
   const r = view.getBoundingClientRect();

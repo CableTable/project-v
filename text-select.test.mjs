@@ -16,6 +16,14 @@ test('press in a word gap (<= the line height) selects', () => {
   assert.equal(pressAction(54, 5, [...words, { left: 200, right: 250, top: 0, bottom: 10 }]), 'select'); // nearest spans decide
 });
 
+test('word gap: exactly the line height selects, far spans listed first do not decide, a short left span uses the taller right one', () => {
+  const span = (left, right, top = 0, bottom = 10) => ({ left, right, top, bottom });
+  assert.equal(pressAction(55, 5, [span(10, 50), span(60, 100)]), 'select'); // gap 10 == height 10
+  assert.equal(pressAction(55, 5, [span(10, 50), span(61, 100)]), 'pan'); // gap 11
+  assert.equal(pressAction(55, 5, [span(0, 5), span(10, 50), span(200, 250), span(58, 100)]), 'select'); // far left and far right listed before the near ones
+  assert.equal(pressAction(55, 2, [span(10, 50, 0, 4), span(58, 100)]), 'select'); // superscript left (4 high), gap 8 <= 10
+});
+
 test('press in a column gap (wider than the line height) pans', () => {
   assert.equal(pressAction(60, 5, rects), 'pan'); // 20 wide, line 10 high
 });
