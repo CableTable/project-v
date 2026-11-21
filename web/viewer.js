@@ -458,11 +458,13 @@ view.addEventListener('mousedown', (e) => {
   addEventListener('mousemove', move);
   addEventListener('mouseup', end);
 });
-addEventListener('mouseup', () => {
+function endSelecting() {
   if (!selecting) return;
   selecting = false;
   update(); // drop the pages kept during the drag
-});
+}
+addEventListener('mouseup', endSelecting);
+addEventListener('blur', endSelecting); // a mouseup missed while the window lost focus
 
 // T17: Ctrl+C on a selection in the page view copies its plain text (line and page ends -> "\n"); elsewhere (Find box, ⚙ log path) native copy.
 document.addEventListener('copy', (e) => {

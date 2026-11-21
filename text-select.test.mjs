@@ -10,8 +10,14 @@ test('press on a span selects', () => {
   assert.equal(pressAction(20, 25, rects), 'select');
 });
 
-test('press in the gap between two spans of one line selects', () => {
-  assert.equal(pressAction(60, 5, rects), 'select');
+test('press in a word gap (<= the line height) selects', () => {
+  const words = [{ left: 10, right: 50, top: 0, bottom: 10 }, { left: 58, right: 100, top: 0, bottom: 10 }];
+  assert.equal(pressAction(54, 5, words), 'select');
+  assert.equal(pressAction(54, 5, [...words, { left: 200, right: 250, top: 0, bottom: 10 }]), 'select'); // nearest spans decide
+});
+
+test('press in a column gap (wider than the line height) pans', () => {
+  assert.equal(pressAction(60, 5, rects), 'pan'); // 20 wide, line 10 high
 });
 
 test('press on empty page, past a line end or with no text pans', () => {

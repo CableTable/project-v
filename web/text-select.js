@@ -1,14 +1,14 @@
 // text-select.js — T17: what a press on the page view does, and the plain text Ctrl+C copies.
 
-/** A left press at (x, y): 'select' on a text span or in the gap between two spans of one line, else 'pan'. rects: the pressed page's span boxes. */
+/** A left press at (x, y): 'select' on a text span or in a word gap of one line (gap <= the line height), else 'pan' (a column gap, the margin). rects: the pressed page's span boxes. */
 export function pressAction(x, y, rects) {
-  let left = false, right = false;
+  let l = null, r2 = null;
   for (const r of rects) {
     if (y < r.top || y > r.bottom) continue;
     if (x >= r.left && x <= r.right) return 'select';
-    if (r.right < x) left = true; else right = true;
+    if (r.right < x) { if (!l || r.right > l.right) l = r; } else if (!r2 || r.left < r2.left) r2 = r;
   }
-  return left && right ? 'select' : 'pan';
+  return l && r2 && r2.left - l.right <= l.bottom - l.top ? 'select' : 'pan';
 }
 
 /** pages: per page in order, its pdf.js string items with sel = [start, end] of the selected part or null.

@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn wheel_log_appends_until_the_cap() {
-        let file = std::env::temp_dir().join("pv-t10-wheel-log.txt");
+        let file = std::env::temp_dir().join(format!("pv-t10-wheel-log-{}.txt", std::process::id()));
         let _ = std::fs::remove_file(&file);
         assert!(append_capped(&file, "", 10).unwrap(), "an empty line only makes the file");
         assert!(append_capped(&file, "abcd\n", 10).unwrap());
