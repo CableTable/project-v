@@ -41,7 +41,7 @@ export function openTiff(name, bytes, cacheBytes = CACHE_BYTES) {
   const odd = pages.find((ifd) => !DECODED.includes(ifd.t259?.[0] ?? 1));
   if (odd) throw unreadable(name, `compression ${odd.t259[0]} not supported`);
   const sizes = pages.map(pageSize), cache = new Map(), failed = new Map(), inflight = new Map();
-  let cached = 0, generation = 0; // generation: bumped by free(), so a decode that free() overtook neither counts nor caches its page
+  let cached = 0, generation = 0; // generation: bumped by free(), so a decode that free() overtook neither counts, caches nor remembers a failure of its page
 
   /** RGBA of page i (0-based), decoded once; the most recently used pages stay. Throws (once logged) when the page cannot be decoded. */
   async function decode(i) {
@@ -53,7 +53,7 @@ export function openTiff(name, bytes, cacheBytes = CACHE_BYTES) {
       UTIF.decodeImage(buf, pages[i], pages);
       rgba = UTIF.toRGBA8(pages[i]);
     } catch (e) {
-      failed.set(i, e);
+      if (gen === generation) failed.set(i, e);
       console.warn('TIFF page', i + 1, e);
       throw e;
     } finally {

@@ -9,10 +9,11 @@ globalThis.ImageData = class { constructor(data, width, height) { Object.assign(
 globalThis.createImageBitmap = async (img) => ({ img, close() { this.closed = true; } });
 const fakeContext = () => ({ draws: [], texts: [], drawImage(bmp, x, y, w, h) { this.draws.push({ bmp, x, y, w, h }); }, fillRect() {}, fillText(text) { this.texts.push(text); } });
 
-let decodes = 0, failNext = false;
+let decodes = 0, failNext = false, onDecode = null; // onDecode: runs once at the start of the next decode
 const decodeImage = UTIF.decodeImage;
 UTIF.decodeImage = (...args) => {
   decodes++;
+  if (onDecode) { const f = onDecode; onDecode = null; f(); }
   if (failNext) { failNext = false; throw new Error('broken strip'); }
   return decodeImage(...args);
 };
@@ -189,4 +190,26 @@ test('TIFF doc: a page whose decode failed once is decoded again after freePixel
     assert.equal(ctx.texts.length, 0);
     assert.deepEqual([...ctx.draws[0].bmp.img.data.subarray(0, 4)], [7, 7, 7, 255], 'decoded again after freePixels');
   } finally { console.warn = warn; failNext = false; }
+});
+
+test('TIFF doc: a decode that freePixels overtook does not remember its failure; one started after does', async () => {
+  const doc = openTiff('race.tif', makeTiff([{ w: 8, h: 8, gray: 7 }]));
+  const draw = async () => { const page = await doc.getPage(1), ctx = fakeContext(); await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: 1 }) }).promise; return ctx; };
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    failNext = true;
+    onDecode = () => doc.freePixels(); // freed while the decode is running, which then fails
+    assert.equal((await draw()).texts.length, 1, 'the overtaken decode still draws the error text');
+    decodes = 0;
+    const ctx = await draw();
+    assert.equal(decodes, 1, 'the failure was not remembered: decoded again');
+    assert.deepEqual([...ctx.draws[0].bmp.img.data.subarray(0, 4)], [7, 7, 7, 255]);
+    doc.freePixels(); // opposite order: freed first, then a failing decode
+    failNext = true;
+    assert.equal((await draw()).texts.length, 1);
+    decodes = 0;
+    assert.equal((await draw()).draws.length, 0, 'remembered');
+    assert.equal(decodes, 0, 'no extra decode');
+  } finally { console.warn = warn; failNext = false; onDecode = null; }
 });
