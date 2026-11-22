@@ -1,6 +1,7 @@
 // tiff-doc.js — T13: a .tif / .tiff as the slice of a pdf.js document the viewer, Print and Find use:
 // numPages, getPage(n) -> { getViewport, render -> { promise, cancel }, getTextContent (empty) }, destroy, freePixels.
 // The page list and sizes are read at open; a page's pixels are decoded when it is first drawn and kept until freed.
+// A page that failed to decode stays failed (no second try) until freePixels / destroy, which also forget the failure.
 import UTIF from './vendor/utif/UTIF.js';
 
 const DECODED = [1, 3, 4, 5, 6, 7, 8, 32773, 32809]; // compressions the vendored UTIF decodes (8 = Deflate: strips are inflated first, see inflateStrips)
@@ -82,7 +83,7 @@ export function openTiff(name, bytes, cacheBytes = CACHE_BYTES) {
     return rgba;
   }
 
-  function free() { cache.clear(); inflight.clear(); cached = 0; generation++; }
+  function free() { cache.clear(); inflight.clear(); failed.clear(); cached = 0; generation++; } // failed too: a page that failed for a passing reason (memory) is decoded again
 
   async function getPage(n) {
     const { w, h } = sizes[n - 1], ifd = pages[n - 1];

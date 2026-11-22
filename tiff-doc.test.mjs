@@ -174,3 +174,19 @@ test('TIFF doc: a page that fails to decode shows "<name> page <n>: this TIFF pa
   } finally { console.warn = warn; }
   assert.equal(warned.length, 1);
 });
+
+test('TIFF doc: a page whose decode failed once is decoded again after freePixels (and not before)', async () => {
+  const doc = openTiff('once.tif', makeTiff([{ w: 8, h: 8, gray: 7 }]));
+  const draw = async () => { const page = await doc.getPage(1), ctx = fakeContext(); await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: 1 }) }).promise; return ctx; };
+  const warn = console.warn;
+  console.warn = () => {};
+  failNext = true; // the first decode throws (a passing reason), the next would work
+  try {
+    assert.equal((await draw()).texts.length, 1, 'the first draw shows the unreadable text');
+    assert.equal((await draw()).draws.length, 0, 'still failed until freed');
+    doc.freePixels();
+    const ctx = await draw();
+    assert.equal(ctx.texts.length, 0);
+    assert.deepEqual([...ctx.draws[0].bmp.img.data.subarray(0, 4)], [7, 7, 7, 255], 'decoded again after freePixels');
+  } finally { console.warn = warn; failNext = false; }
+});
