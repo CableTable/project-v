@@ -284,6 +284,27 @@ try {
     await page.locator('#file-menu summary').click();
   });
 
+  await step('tab close x is 24x24 at 16px with a round hover (T18)', async () => {
+    const tabs = page.locator('#tabs .tab'), closes = page.locator('#tabs .tx');
+    assert.equal(await tabs.count(), 2);
+    const tabHeight = () => tabs.first().evaluate((el) => el.getBoundingClientRect().height);
+    console.log(`T18 tab height: ${await tabHeight()}px`);
+    for (const [n, x] of (await closes.all()).entries()) {
+      const box = await x.boundingBox(), size = await x.evaluate((el) => getComputedStyle(el).fontSize);
+      assert(Math.abs(box.width - 24) < 0.01 && Math.abs(box.height - 24) < 0.01, `tab ${n + 1} close is ${box.width}x${box.height}, not 24x24`);
+      assert.equal(size, '16px', `tab ${n + 1} close font-size`);
+    }
+    await mkdir('shots', { recursive: true });
+    for (const scheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await closes.last().hover();
+      assert.equal(await closes.last().evaluate((el) => getComputedStyle(el).borderRadius), '50%');
+      await page.locator('#tabs').screenshot({ path: `shots/T18-${scheme}.png` });
+    }
+    await page.emulateMedia({ colorScheme: null });
+    await page.mouse.move(0, 300);
+  });
+
   await step('merge Add files and validate the saved PDF', async () => {
     await page.locator('#merge').click();
     const dialog = page.getByRole('dialog', { name: 'Merge PDFs' });

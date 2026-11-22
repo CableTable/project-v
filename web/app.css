@@ -55,7 +55,10 @@ input.fld{font:inherit;color:inherit;min-width:0;width:3ch;box-sizing:content-bo
 .tab.on{background:var(--panel);box-shadow:inset 0 2px 0 var(--acc)}
 .tab button{border:0;border-radius:0;background:none;padding:6px 8px}
 .tl{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.tx{padding:6px 7px!important;color:var(--muted)}
+/* T18: 24px round close; `.tab .tx` outranks `.tab button` (padding, radius, background) without !important */
+.tab .tx{box-sizing:border-box;width:24px;height:24px;margin:0 4px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:16px;line-height:1;border-radius:50%;color:var(--muted)}
+.tab .tx:hover{background:#8884}
+.tab .tx:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
 .tab:hover .tx,.tab.on .tx{color:var(--text)}
 #msgs div{display:flex;gap:8px;align-items:center;padding:4px 10px;background:var(--sel);border-bottom:1px solid var(--line)}
 #msgs span{flex:1}
