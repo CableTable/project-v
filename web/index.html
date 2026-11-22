@@ -5,29 +5,36 @@
 <title>Project V</title>
 <link rel="stylesheet" href="app.css">
 <body>
-<!-- The board's toolbar (mockups/V1_Viewer.html). -->
+<!-- T19 toolbar, variant C of mockups/V2_Toolbar.html: tools left, page + zoom island centred, ⚙ and Open in Project D right. -->
 <div class="bar">
-  <details id="file-menu">
-    <summary>File</summary>
-    <div class="recent">
-      <h4>Recent files</h4>
-      <div id="menu-recent"></div>
-    </div>
-  </details>
-  <details id="settings-menu">
-    <summary aria-label="Settings" title="Settings">⚙</summary>
-    <div class="pop"><label><input type="checkbox" id="instant-tabs"> Instant tab switching (uses more RAM)</label>
-      <label><input type="checkbox" id="ask-close"> Ask before closing several tabs</label>
-      <label><input type="checkbox" id="wheel-log"> Log wheel events</label><div id="wheel-log-path" class="path"></div></div>
-  </details>
-  <button id="open">Open  Ctrl+O</button><button id="side" title="Show or hide the page thumbnails (F4)" aria-pressed="true" disabled>Pages  F4</button><span class="sep"></span>
-  <span id="pagebox" class="off"><input id="page" class="fld" size="3" aria-label="Page number" disabled> / <span id="count">–</span></span><span class="sep"></span>
-  <button id="zout" class="sq" title="Zoom out (Ctrl+−)" aria-label="Zoom out" disabled>−</button><span id="zoom" class="fld off">–</span><button id="zin" class="sq" title="Zoom in (Ctrl+=)" aria-label="Zoom in" disabled>+</button><span class="sep"></span>
-  <button id="fitw" disabled>Fit width</button><button id="fitp" disabled>Fit page</button><button id="find" aria-controls="find-bar" aria-expanded="false" aria-keyshortcuts="Control+F" disabled>Find  Ctrl+F</button>
-  <button id="merge" title="Merge PDFs (Ctrl+Shift+M)" aria-keyshortcuts="Control+Shift+M">Merge</button>
-  <button id="print" title="Print (Ctrl+P)" aria-keyshortcuts="Control+P" disabled>Print  Ctrl+P</button>
-  <span class="sp"></span>
-  <button id="open-in-d" class="acc" title="Open in Project D (Ctrl+Shift+D)" aria-keyshortcuts="Control+Shift+D" disabled>Open in Project D</button>
+  <div class="g l">
+    <details id="file-menu">
+      <summary class="ib" title="File" aria-label="File"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5 M9 13h6 M9 17h6"/></svg></summary>
+      <div class="recent">
+        <h4>Recent files</h4>
+        <div id="menu-recent"></div>
+      </div>
+    </details>
+    <button id="open" class="ib" title="Open (Ctrl+O)" aria-label="Open (Ctrl+O)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+    <button id="side" class="ib" title="Pages (F4)" aria-label="Pages (F4)" aria-pressed="true" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M9 4v16"/></svg></button><span class="sep"></span>
+    <button id="find" class="ib" title="Find (Ctrl+F)" aria-label="Find (Ctrl+F)" aria-controls="find-bar" aria-expanded="false" aria-keyshortcuts="Control+F" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5a6 6 0 1 0 0 12a6 6 0 0 0 0-12z M20 20l-4.2-4.2"/></svg></button>
+    <button id="merge" class="ib" title="Merge PDFs (Ctrl+Shift+M)" aria-label="Merge PDFs (Ctrl+Shift+M)" aria-keyshortcuts="Control+Shift+M"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v5a5 5 0 0 0 5 5 M18 4v5a5 5 0 0 1-5 5 M12 14v7 M9 18l3 3 3-3"/></svg></button>
+    <button id="print" class="ib" title="Print (Ctrl+P)" aria-label="Print (Ctrl+P)" aria-keyshortcuts="Control+P" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 9V3h10v6 M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2 M7 14h10v7H7z"/></svg></button>
+  </div>
+  <div class="g isl">
+    <button id="zout" class="ib" title="Zoom out (Ctrl+−)" aria-label="Zoom out (Ctrl+−)" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button><span id="zoom" class="fld zv off" title="Zoom level">–</span><button id="zin" class="ib" title="Zoom in (Ctrl+=)" aria-label="Zoom in (Ctrl+=)" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12 M12 6v12"/></svg></button><span class="sep"></span>
+    <button id="fitw" class="ib" title="Fit width" aria-label="Fit width" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5v14 M20 5v14 M8 12h8 M8 12l3-3 M8 12l3 3 M16 12l-3-3 M16 12l-3 3"/></svg></button><button id="fitp" class="ib" title="Fit page" aria-label="Fit page" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4 M15 4h4a1 1 0 0 1 1 1v4 M20 15v4a1 1 0 0 1-1 1h-4 M9 20H5a1 1 0 0 1-1-1v-4 M9 8h6v8H9z"/></svg></button><span class="sep"></span>
+    <span id="pagebox" class="off"><input id="page" class="fld" size="3" aria-label="Page number" title="Go to page" disabled> / <span id="count">–</span></span>
+  </div>
+  <div class="g r">
+    <details id="settings-menu">
+      <summary class="ib" aria-label="Settings" title="Settings">⚙</summary>
+      <div class="pop"><label><input type="checkbox" id="instant-tabs"> Instant tab switching (uses more RAM)</label>
+        <label><input type="checkbox" id="ask-close"> Ask before closing several tabs</label>
+        <label><input type="checkbox" id="wheel-log"> Log wheel events</label><div id="wheel-log-path" class="path"></div></div>
+    </details>
+    <button id="open-in-d" class="ib acc" title="Open in Project D (Ctrl+Shift+D)" aria-label="Open in Project D (Ctrl+Shift+D)" aria-keyshortcuts="Control+Shift+D" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6 M20 4l-9 9 M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>Open in Project D</button>
+  </div>
 </div>
 <div id="tabs" role="tablist" aria-label="Open documents" hidden></div>
 <div id="msgs" role="status"></div>

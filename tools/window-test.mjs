@@ -305,6 +305,44 @@ try {
     await page.mouse.move(0, 300);
   });
 
+  await step('toolbar is 40px with 32x32 icon buttons, a centred island, and wraps without losing a button (T19)', async () => {
+    const cdp = await page.context().newCDPSession(page);
+    const width = (w) => cdp.send('Emulation.setDeviceMetricsOverride', { width: w, height: 800, deviceScaleFactor: 1, mobile: false });
+    const bar = page.locator('.bar');
+    try {
+      await width(1400);
+      const wide = await page.evaluate(() => {
+        const rect = (el) => el.getBoundingClientRect(), b = rect(document.querySelector('.bar')), isl = rect(document.querySelector('.isl'));
+        const icons = [...document.querySelectorAll('.bar .ib:not(.acc)')].map((el) => {
+          const r = rect(el);
+          return { id: el.id || el.parentElement.id, w: r.width, h: r.height, svg: !!el.querySelector('svg') || el.parentElement.id === 'settings-menu', title: el.title };
+        });
+        return { barH: b.height, centre: Math.abs(isl.x + isl.width / 2 - (b.x + b.width / 2)), icons };
+      });
+      assert.equal(wide.barH, 40, `bar is ${wide.barH}px tall, not 40`);
+      assert(wide.centre <= 40, `island centre is ${wide.centre}px off the bar centre`);
+      assert(wide.icons.length === 11, `only ${wide.icons.length} icon buttons`);
+      for (const i of wide.icons) {
+        assert(i.w === 32 && i.h === 32, `${i.id} is ${i.w}x${i.h}, not 32x32`);
+        assert(i.svg && i.title.trim(), `${i.id}: svg ${i.svg}, title '${i.title}'`);
+      }
+      await mkdir('shots', { recursive: true });
+      for (const scheme of ['light', 'dark']) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await bar.screenshot({ path: `shots/T19-${scheme}.png` });
+      }
+      await page.emulateMedia({ colorScheme: null });
+      await width(700);
+      const outside = await page.evaluate(() => [...document.querySelectorAll('.bar button, .bar summary, .bar input, .bar #zoom')]
+        .filter((el) => !el.closest('.recent, .pop')).filter((el) => { const r = el.getBoundingClientRect(); return r.width === 0 || r.left < 0 || r.right > innerWidth; }).map((el) => el.id || el.textContent));
+      assert.deepEqual(outside, [], 'toolbar buttons outside the 700px window');
+      await bar.screenshot({ path: 'shots/T19-narrow.png' });
+    } finally {
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+      await page.emulateMedia({ colorScheme: null });
+    }
+  });
+
   await step('merge Add files and validate the saved PDF', async () => {
     await page.locator('#merge').click();
     const dialog = page.getByRole('dialog', { name: 'Merge PDFs' });
