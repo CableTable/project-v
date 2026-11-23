@@ -1,4 +1,4 @@
-# Unit tests, then the Rust tests and exe build, on every PR and push to main. (Release job: later, as in Project D.)
+# Unit tests, then the Rust tests and exe build, on every PR and push to main; a push to main that changed more than *.md files then publishes ProjectV.exe as a GitHub release.
 name: Test
 
 env:
@@ -62,3 +62,47 @@ jobs:
           name: ProjectV-exe
           path: src-tauri/target/release/ProjectV.exe
           retention-days: 14
+
+  release:
+    needs: exe
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # One release at a time, so the `.2` tag pick of a second release that day cannot race.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the whole history and every tag: the previous release's commits are listed
+      - name: A push that changed only *.md files makes no release
+        id: docs
+        run: |
+          skip=false
+          # workflow_dispatch always releases; so does a push whose diff cannot be read (new branch, forced push).
+          if [ "${{ github.event_name }}" = push ] && files=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" 2>/dev/null) && [ -n "$files" ] && ! echo "$files" | grep -qv '\.md$'; then skip=true; fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+      - if: steps.docs.outputs.skip != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ProjectV-exe
+          path: dist
+      - name: Publish the release
+        if: steps.docs.outputs.skip != 'true'
+        run: |
+          git tag --list > "$RUNNER_TEMP/tags.txt"
+          tag=$(node tools/release-notes.mjs tag "$RUNNER_TEMP/tags.txt")
+          # The notes list the `T<n>` commits since the latest release (a failed lookup lists none).
+          prev=$(gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName || true)
+          : > "$RUNNER_TEMP/subjects.txt"
+          if [ -n "$prev" ]; then git log --format=%s "$prev..${{ github.sha }}" > "$RUNNER_TEMP/subjects.txt" || true; fi
+          {
+            echo "Portable ProjectV.exe (no installer, no admin). Built from ${{ github.sha }}."
+            echo
+            node tools/release-notes.mjs notes "$RUNNER_TEMP/subjects.txt" TODO.md | sed 's/^/- /'
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$tag" dist/ProjectV.exe --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Project V $tag" --notes-file "$RUNNER_TEMP/notes.md"
