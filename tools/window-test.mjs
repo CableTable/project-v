@@ -353,6 +353,7 @@ try {
     return true;
   });
   const saved = () => page.getByRole('tab', { selected: true }).getByText('merged.pdf', { exact: true }).waitFor();
+  const pickPage = (file, n) => mergeView().getByRole('button', { name: `Pick ${basename(file)} p${n}`, exact: true });
 
   await step('merge Add files and validate the saved PDF', async () => {
     await page.locator('#merge').click();
@@ -382,28 +383,107 @@ try {
     await until('Restart removed the files', async () => await merge.locator('ol li').count() === 0);
     await merge.getByRole('button', { name: 'Add files' }).click();
     await merge.getByRole('checkbox', { name: 'Bookmark per file' }).check();
-    await merge.getByRole('button', { name: 'Pages', exact: true }).click();
-    const grid = merge.getByRole('list', { name: 'Pages in merge order' });
-    const removed = grid.getByRole('listitem', { name: `${basename(second)} p1` });
-    await removed.press('Control+ArrowLeft');
-    await merge.getByRole('button', { name: 'Files', exact: true }).click();
-    const range = merge.getByRole('textbox', { name: `Page range for ${basename(second)}` });
-    await until('page range disabled after removing a page', () => range.isDisabled());
-    await merge.getByRole('button', { name: 'Reset page order' }).click();
-    await until('page range enabled after Reset page order', () => range.isEnabled());
-    await merge.getByRole('button', { name: 'Pages', exact: true }).click();
-    await removed.press('Delete');
-    const rotated = grid.getByRole('listitem', { name: `${basename(second)} p2` });
-    await rotated.getByRole('button', { name: /Rotate/ }).click();
-    await merge.getByRole('button', { name: 'Files', exact: true }).click();
-    await until("page range value '2'", async () => await range.inputValue() === '2');
-    await merge.getByRole('button', { name: 'Merge', exact: true }).click();
+    await merge.getByRole('switch', { name: 'Page mode' }).check();
+    // one row per file, nothing picked
+    await pickPage(second, 2).waitFor();
+    await pickPage(first, 1).waitFor();
+    assert.equal(await merge.locator('.merge-rows [aria-pressed="true"]').count(), 0);
+    assert(await merge.getByRole('button', { name: 'Choose pages' }).isDisabled());
+    // picked: second p2, then first p1 (not the file order); second p1 picked and un-picked
+    await pickPage(second, 2).click();
+    await pickPage(first, 1).click();
+    await pickPage(second, 1).click();
+    await pickPage(second, 1).click();
+    await merge.getByRole('button', { name: `Rotate 90° ${basename(second)} p2` }).click();
+    await merge.getByRole('button', { name: 'Merge PDF 2 pages', exact: true }).click();
     await saved();
     const target = join(root, 'out', 'merged.pdf');
     const pdf = await PDFDocument.load(await readFile(target));
-    assert.deepEqual(pdf.getPages().map((page) => page.getRotation().angle), [0, 90]);
+    assert.deepEqual(pdf.getPages().map((page) => page.getRotation().angle), [90, 0], 'pick order, rotation kept');
     assert(pdf.catalog.has(PDFName.of('Outlines')));
     await checkMerged(target, 2);
+  });
+
+  await step('merge page mode: select tools, count button, ranges hide, picks kept until Reset / Restart', async () => {
+    await page.keyboard.press('Control+Shift+M');
+    const merge = mergeView();
+    const row = (file) => merge.getByRole('group', { name: `Pages of ${basename(file)}` });
+    const tool = (file, name) => row(file).getByRole('button', { name, exact: true }).click();
+    const picked = () => merge.locator('.merge-rows .merge-pick').evaluateAll((buttons) =>
+      buttons.map((button) => button.getAttribute('aria-pressed') === 'true' ? 1 : 0).join(''));
+    const counted = (name, pages) => until(`${name}, pages ${pages}`, async () => {
+      assert.equal(await merge.locator('footer button').textContent(), name);
+      assert.equal(await picked(), pages);
+      return true;
+    });
+    const ranges = merge.getByRole('textbox', { name: /^Page range for / });
+    const mode = merge.getByRole('switch', { name: 'Page mode' });
+
+    // pages in row order: first p1, second p1, second p2
+    await counted('Merge PDF 2 pages', '101');
+    assert.equal(await ranges.count(), 0, 'no range box in page mode');
+    assert.equal(await merge.locator('.merge-files li').count(), 2, 'the cards stay');
+    await tool(second, 'None');
+    await counted('Merge PDF 1 page', '100');
+    await tool(second, 'All');
+    await counted('Merge PDF 3 pages', '111');
+    await tool(second, 'Invert');
+    await counted('Merge PDF 1 page', '100');
+    await tool(second, 'Odd');
+    await counted('Merge PDF 2 pages', '110');
+    await tool(second, 'Even');
+    await counted('Merge PDF 2 pages', '101');
+    await tool(first, 'None');
+    await tool(second, 'None');
+    await counted('Choose pages', '000');
+    assert(await merge.locator('footer button').isDisabled(), '0 pages: disabled');
+
+    const thumb = row(second).locator('.merge-thumb').first();
+    const painted = () => thumb.locator('canvas').evaluate((canvas) => canvas.height);
+    await until('thumbnail drawn at 112', async () => await painted() === 112);
+    await row(second).getByRole('slider', { name: `Thumbnail zoom for ${basename(second)}` }).fill('240');
+    await until('zoom: bigger, drawn again', async () => Math.round((await thumb.boundingBox()).width) === 240 && await painted() === 240);
+
+    // off: range boxes back, whole files merge; on again: the same picks
+    await pickPage(second, 2).click();
+    await mode.uncheck();
+    assert.equal(await ranges.count(), 2);
+    await merge.getByRole('button', { name: 'Merge', exact: true }).click();
+    await saved();
+    await checkMerged(join(root, 'out', 'merged.pdf'), 3);
+    await page.keyboard.press('Control+Shift+M');
+    await mode.check();
+    await counted('Merge PDF 1 page', '001');
+    await pickPage(first, 1).click();
+    await counted('Merge PDF 2 pages', '101');
+
+    await mkdir('shots', { recursive: true });
+    for (const scheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.screenshot({ path: `shots/vmerge-b1-${scheme}.png` });
+    }
+    await page.emulateMedia({ colorScheme: null });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 700, deviceScaleFactor: 1, mobile: false });
+    try {
+      await page.screenshot({ path: 'shots/vmerge-b1-1024.png' });
+    } finally {
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+    }
+
+    await merge.getByRole('button', { name: 'Reset', exact: true }).click();
+    await counted('Choose pages', '000');
+    await pickPage(first, 1).click();
+    await merge.getByRole('button', { name: 'Restart', exact: true }).click();
+    await box('Remove all files?').getByRole('button', { name: 'Remove all' }).click();
+    await until('Restart removed files and rows', async () => await merge.locator('ol li').count() === 0);
+    assert.equal(await mode.isChecked(), false);
+    await merge.getByRole('button', { name: 'Add files' }).click();
+    await mode.check();
+    await counted('Choose pages', '000');
+    // leave it as the next step expects it: page mode off, bookmark per file on
+    await mode.uncheck();
+    await merge.getByRole('checkbox', { name: 'Bookmark per file' }).check();
   });
 
   await step('merge tab: file cards, live drag, preview, Reset / Restart, ask on close', async () => {
@@ -566,10 +646,10 @@ try {
     await merge.dispatchEvent('drop', { dataTransfer: data });
     await merge.locator('.merge-info').filter({ hasText: '1000 pages' }).waitFor();
     const pagesStart = performance.now();
-    await merge.getByRole('button', { name: 'Pages', exact: true }).click();
-    const grid = merge.getByRole('list', { name: 'Pages in merge order' });
+    await merge.getByRole('switch', { name: 'Page mode' }).check();
+    const grid = merge.getByRole('group', { name: 'Pages of 1000-pages.pdf' });
     await grid.locator('canvas').first().waitFor();
-    timing('1000-page Pages view to first thumbnail', pagesStart);
+    timing('1000-page page mode to first thumbnail', pagesStart);
     await until('1000 page items', async () => await grid.getByRole('listitem').count() === 1000);
     assert(await grid.locator('canvas').count() < 1000);
     await page.keyboard.press('Control+w');

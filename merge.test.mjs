@@ -49,6 +49,42 @@ test('merge Reset: files back in the order added, every page in again and unrota
   assert.deepEqual(list, [c, a, b]);
 });
 
+const short = (picks) => picks.map(({ file, pageIndex }) => `${file.name}${pageIndex + 1}`).join(' ');
+
+test('page picks: a click picks and un-picks, and the list keeps the order the picks were made in', () => {
+  const a = { name: 'a', pageCount: 3 }, b = { name: 'b', pageCount: 2 };
+  let picks = merge.togglePick([], b, 1);
+  picks = merge.togglePick(picks, a, 2);
+  const before = picks = merge.togglePick(picks, a, 0);
+  assert.equal(short(picks), 'b2 a3 a1');
+  picks = merge.togglePick(picks, a, 2);
+  assert.equal(short(picks), 'b2 a1');
+  assert.equal(short(merge.togglePick(picks, a, 2)), 'b2 a1 a3', 'picked again: the end of the list');
+  assert.equal(short(before), 'b2 a3 a1', 'the input is not changed');
+});
+
+test('page picks: all, none, invert, odd and even act on one file; a page that stays picked keeps its place', () => {
+  const a = { name: 'a', pageCount: 5 }, b = { name: 'b', pageCount: 2 };
+  const start = merge.togglePick(merge.togglePick([], a, 2), b, 0); // a3 b1
+  const run = (tool) => short(merge.selectPicks(start, a, tool));
+  assert.equal(run('all'), 'a3 b1 a1 a2 a4 a5');
+  assert.equal(run('none'), 'b1');
+  assert.equal(run('invert'), 'b1 a1 a2 a4 a5');
+  assert.equal(run('odd'), 'a3 b1 a1 a5');
+  assert.equal(run('even'), 'b1 a2 a4');
+});
+
+test('page picks: kept while page mode is off (whole files / ranges merge then), cleared by Reset; rotation holds in both', () => {
+  const a = { name: 'a', added: 0, pageCount: 2 };
+  a.sheets = rotatePage(expandPages([a]), 1);
+  const pages = expandPages([a]), picks = merge.togglePick([], a, 1);
+  const merged = (mode, chosen = picks) => merge.pagesToMerge(mode, pages, chosen).map(({ pageIndex, rotate }) => [pageIndex, rotate]);
+  assert.deepEqual(merged(true), [[1, 90]]);
+  assert.deepEqual(merged(false), [[0, 0], [1, 90]]);
+  assert.deepEqual(merged(true), [[1, 90]], 'on again: the same picks');
+  assert.deepEqual(merged(true, merge.resetFiles([a]).picks), []);
+});
+
 test('merge rejects an empty list', async () => {
   await assert.rejects(mergePdfs([]), /add at least one PDF/i);
 });

@@ -23,11 +23,35 @@ export function sortFiles(list, descending = false) {
 export const expandPages = (files) => files.flatMap((file) =>
   Array.from({ length: file.pageCount }, (_, pageIndex) => ({ file, pageIndex, rotate: 0 })));
 
-/** Reset: the files back in the order they were added (`added`), every page in again, unrotated. */
+/** Reset: the files back in the order they were added (`added`), every page in again, unrotated, nothing picked. */
 export function resetFiles(list) {
   const files = [...list].sort((a, b) => a.added - b.added);
-  return { files, pages: expandPages(files) };
+  return { files, pages: expandPages(files), picks: [] };
 }
+
+// Page mode picks: { file, pageIndex } in the order they were picked.
+export function togglePick(picks, file, pageIndex) {
+  const next = picks.filter((page) => page.file !== file || page.pageIndex !== pageIndex);
+  return next.length < picks.length ? next : [...picks, { file, pageIndex }];
+}
+
+const PICK_TOOLS = {
+  all: () => true, none: () => false, invert: (i, on) => !on, odd: (i) => i % 2 === 0, even: (i) => i % 2 === 1,
+};
+
+/** One file's row tool: a page that stays picked keeps its place, a new one goes to the end in page order. */
+export function selectPicks(picks, file, tool) {
+  const on = new Set(picks.filter((page) => page.file === file).map((page) => page.pageIndex));
+  const want = new Set(Array.from({ length: file.pageCount }, (_, i) => i).filter((i) => PICK_TOOLS[tool](i, on.has(i))));
+  return [
+    ...picks.filter((page) => page.file !== file || want.has(page.pageIndex)),
+    ...[...want].filter((i) => !on.has(i)).map((pageIndex) => ({ file, pageIndex })),
+  ];
+}
+
+/** What Merge writes: the picks in page mode, else the files' pages; a page's rotation (`file.sheets`) holds in both. */
+export const pagesToMerge = (pageMode, pages, picks) => (pageMode ? picks : pages)
+  .map(({ file, pageIndex }) => ({ file, pageIndex, rotate: file.sheets?.[pageIndex]?.rotate ?? 0 }));
 
 export const rotatePage = (pages, index) => hasIndex(pages, index)
   ? pages.map((page, i) => i === index ? { ...page, rotate: (page.rotate + 90) % 360 } : page)

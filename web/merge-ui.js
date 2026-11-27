@@ -1,6 +1,6 @@
 import {
-  addFiles, clearFiles, displacedFiles, expandPages, loadMergePdf, mergePdfs, moveFile,
-  pageRange, pagesByFile, removeFile, replacePageRange, resetFiles, rotatePage, setFilePages, sortFiles,
+  addFiles, clearFiles, expandPages, loadMergePdf, mergePdfs, moveFile, pageRange, pagesByFile, pagesToMerge,
+  removeFile, replacePageRange, resetFiles, rotatePage, selectPicks, setFilePages, sortFiles, togglePick,
 } from './merge.js';
 
 import { NO_PDF_PART, isAi, hasPdfHeader } from './ai-file.js';
@@ -73,8 +73,8 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
   const style = Object.assign(el('link'), { rel: 'stylesheet', href: new URL('./merge.css', import.meta.url).href });
   document.head.append(style);
 
-  let list = clearFiles(), pages = [], pageMode = false, busy = false, dragged = null, count = 0, orderBefore = null;
-  let displaced = new Set();
+  // `pages`: what whole files / range boxes give; `picks`: what page mode has picked, in pick order.
+  let list = clearFiles(), pages = [], picks = [], pageMode = false, busy = false, dragged = null, count = 0, orderBefore = null;
   const view = el('section');
   view.id = 'merge-tab';
   view.hidden = true;
@@ -87,8 +87,8 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
   const pickButton = button('Add files', pick);
   const resetButton = button('Reset', () => {
     const next = resetFiles(list);
-    pages = next.pages;
-    displaced = new Set();
+    ({ pages, picks } = next);
+    for (const file of next.files) file.sheets = expandPages([file]);
     setList(next.files);
   });
   resetButton.title = 'Keep the files: added order, all pages';
@@ -100,19 +100,14 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
   restartButton.title = 'Remove all files';
   const az = button('Sort A–Z', () => setList(sortFiles(list)));
   const za = button('Sort Z–A', () => setList(sortFiles(list, true)));
-  const views = el('div');
-  views.className = 'merge-views';
-  views.setAttribute('role', 'group');
-  views.setAttribute('aria-label', 'Merge view');
-  const filesView = button('Files', () => setView(false));
-  const pagesView = button('Pages', () => setView(true));
-  views.append(filesView, pagesView);
-  toolbar.append(pickButton, az, za, resetButton, restartButton, views);
-
-  const customOrder = el('div', 'Custom page order (set in Pages)');
-  customOrder.className = 'merge-order';
-  const resetPageOrder = button('Reset page order', () => setPages(inFileOrder()));
-  customOrder.append(resetPageOrder);
+  const mode = checkbox('Page mode');
+  mode.label.className = 'merge-mode';
+  mode.input.setAttribute('role', 'switch');
+  mode.input.onchange = () => {
+    pageMode = mode.input.checked;
+    setPages(pages);
+  };
+  toolbar.append(pickButton, az, za, resetButton, restartButton, mode.label);
 
   const hint = el('p', 'Drop PDF or AI files here');
   hint.className = 'merge-hint';
@@ -121,14 +116,13 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
   cards.setAttribute('aria-label', 'PDFs in merge order');
   // The other cards shift while a card is dragged over them.
   cards.ondragover = (event) => {
-    if (busy || displaced.size || !list.includes(dragged)) return;
+    if (busy || !list.includes(dragged)) return;
     const to = list.findIndex(({ card }) => card.contains(event.target));
     const next = moveFile(list, list.indexOf(dragged), to);
     if (next !== list) setList(next);
   };
-  const grid = el('ol');
-  grid.className = 'merge-pages';
-  grid.setAttribute('aria-label', 'Pages in merge order');
+  const rows = el('div');
+  rows.className = 'merge-rows';
   const options = el('div');
   options.className = 'merge-options';
   const perFile = checkbox('Bookmark per file');
@@ -140,7 +134,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
   mergeButton.className = 'acc';
   const footer = el('footer');
   footer.append(status, mergeButton);
-  view.append(title, toolbar, customOrder, hint, cards, grid, options, footer);
+  view.append(title, toolbar, hint, cards, rows, options, footer);
   host.append(view);
 
   const preview = el('dialog'), previewBox = el('div');
@@ -165,7 +159,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
     paintThumb(previewThumb);
   }
 
-  const tiles = new Map(), thumbs = new Map();
+  const thumbs = new Map();
   const observer = new IntersectionObserver((entries) => {
     for (const { target, isIntersecting } of entries) {
       const thumb = thumbs.get(target);
@@ -191,26 +185,33 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
     pickButton.disabled = busy || !tauri;
     resetButton.disabled = busy || !list.length;
     restartButton.disabled = busy;
-    az.disabled = za.disabled = busy || pageMode || displaced.size > 0 || list.length < 2;
-    az.hidden = za.hidden = pageMode;
-    mergeButton.disabled = busy || !tauri || list.length < 2 || list.some((file) => file.loading) || !pages.length;
-    filesView.disabled = pagesView.disabled = perFile.input.disabled = keep.input.disabled = busy;
-    filesView.setAttribute('aria-pressed', String(!pageMode));
-    pagesView.setAttribute('aria-pressed', String(pageMode));
-    cards.hidden = pageMode;
-    grid.hidden = !pageMode;
-    customOrder.hidden = pageMode || !displaced.size;
-    resetPageOrder.disabled = busy;
+    az.disabled = za.disabled = busy || list.length < 2;
+    mergeButton.textContent = !pageMode ? 'Merge' : !picks.length ? 'Choose pages'
+      : `Merge PDF ${picks.length} ${picks.length === 1 ? 'page' : 'pages'}`;
+    mergeButton.disabled = busy || !tauri || list.length < 2 || list.some((file) => file.loading)
+      || !(pageMode ? picks : pages).length;
+    mode.input.disabled = perFile.input.disabled = keep.input.disabled = busy;
+    mode.input.checked = pageMode;
+    view.classList.toggle('page-mode', pageMode);
+    rows.hidden = !pageMode;
     hint.hidden = Boolean(list.length);
+    const picked = pagesByFile(picks);
     for (const file of list) {
       file.zoom.disabled = !file.pdf;
-      file.range.disabled = busy || !file.pdf || displaced.has(file);
+      file.range.disabled = busy || !file.pdf;
+      file.rangeLabel.hidden = pageMode;
       file.remove.disabled = busy;
-      file.card.draggable = !busy && !displaced.size;
-    }
-    for (const { card, rotate, remove } of tiles.values()) {
-      card.draggable = !busy;
-      rotate.disabled = remove.disabled = busy;
+      file.card.draggable = !busy;
+      if (!file.row) continue;
+      for (const control of file.tools) control.disabled = busy;
+      const on = new Set(picked.get(file)?.map(({ pageIndex }) => pageIndex));
+      for (const [i, { pick, rotate, thumb }] of file.tiles.entries()) {
+        pick.setAttribute('aria-pressed', String(on.has(i)));
+        pick.disabled = rotate.disabled = busy;
+        if (thumb.rotate === file.sheets[i].rotate) continue; // turned by the button, or back by Reset
+        thumb.rotate = file.sheets[i].rotate;
+        repaint(thumb);
+      }
     }
   }
 
@@ -221,7 +222,6 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
 
   function setPages(next) {
     pages = next;
-    displaced = displacedFiles(list, pages);
     const groups = pagesByFile(pages);
     for (const file of list) {
       const range = pageRange(groups.get(file) ?? []);
@@ -230,24 +230,19 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
         file.range.value = range;
       }
     }
-    const shown = pageMode ? pages : [];
-    const visible = new Set(shown);
-    for (const [page, { box }] of tiles) {
-      if (visible.has(page)) continue;
-      releaseThumb(box);
-      tiles.delete(page);
+    if (pageMode) {
+      const scrollTop = view.scrollTop;
+      rows.replaceChildren(...list.filter((file) => file.pdf).map((file) => file.row ?? makeRow(file)));
+      view.scrollTop = scrollTop;
     }
-    const scrollTop = grid.scrollTop;
-    grid.replaceChildren(...shown.map((page) => tiles.get(page)?.card ?? makeTile(page)));
-    grid.scrollTop = scrollTop;
     status.textContent = '';
     updateControls();
   }
 
-  function setView(next) {
-    if (next === pageMode) return;
-    pageMode = next;
-    setPages(pages);
+  function setPicks(next) {
+    picks = next;
+    status.textContent = '';
+    updateControls();
   }
 
   function setList(next) {
@@ -255,13 +250,16 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
     for (const file of list) {
       if (kept.has(file)) continue;
       releaseThumb(file.thumb);
+      for (const { thumb } of file.tiles ?? []) releaseThumb(thumb.box);
+      file.row?.remove();
       file.task?.destroy().catch(console.warn);
     }
     list = next;
+    picks = picks.filter(({ file }) => kept.has(file));
     const scrollTop = cards.scrollTop;
     cards.replaceChildren(...list.map((file) => file.card));
     cards.scrollTop = scrollTop;
-    setPages(displaced.size ? pages.filter(({ file }) => kept.has(file)) : inFileOrder());
+    setPages(inFileOrder());
   }
 
   function startDrag(event, item, label) {
@@ -270,51 +268,67 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
     event.dataTransfer.setData('text/plain', label);
   }
 
-  function makeTile(page) {
-    const label = `${page.file.name} p${page.pageIndex + 1}`;
-    const card = el('li'), box = el('div'), caption = el('span', label), actions = el('div');
-    card.tabIndex = 0;
-    card.setAttribute('aria-label', label);
-    card.style.borderTopColor = page.file.color;
-    box.className = 'merge-thumb';
-    box.setAttribute('aria-hidden', 'true');
-    caption.className = 'merge-page-label';
-    caption.title = label;
-    actions.className = 'merge-actions';
-    const remove = button('×', () => edit('Delete'));
-    const rotate = button('↻', () => edit('r'));
-    for (const [control, action] of [[remove, 'Remove'], [rotate, 'Rotate 90°']]) {
-      control.title = action;
-      control.setAttribute('aria-label', `${action} ${label}`);
-    }
-    function edit(key) {
-      if (busy) return;
-      const i = pages.indexOf(page);
-      if (key === 'Delete') setPages(removeFile(pages, i));
-      else if (key === 'r') setPages(rotatePage(pages, i));
-      else {
-        const to = i + (key === 'ArrowLeft' ? -1 : 1);
-        const next = moveFile(pages, i, to);
-        if (next === pages) return;
-        setPages(next);
-        grid.children[to].focus();
-        return;
+  function repaint(thumb) {
+    clearThumb(thumb);
+    observer.unobserve(thumb.box);
+    observer.observe(thumb.box); // reports again: only a tile in view is painted
+  }
+
+  /** Page mode: one file's tools and its pages. */
+  function makeRow(file) {
+    const row = el('div'), bar = el('div'), strip = el('ol'), zoom = el('input');
+    row.className = 'merge-row';
+    row.setAttribute('role', 'group');
+    row.setAttribute('aria-label', `Pages of ${file.name}`);
+    row.style.setProperty('--thumb', '112px');
+    bar.className = 'merge-row-bar';
+    const name = el('span', file.name);
+    name.title = file.name;
+    file.tools = ['All', 'None', 'Invert', 'Odd', 'Even'].map((text) =>
+      button(text, () => setPicks(selectPicks(picks, file, text.toLowerCase()))));
+    Object.assign(zoom, { type: 'range', min: '64', max: '320', step: '16', value: '112' });
+    zoom.setAttribute('aria-label', `Thumbnail zoom for ${file.name}`);
+    zoom.oninput = () => row.style.setProperty('--thumb', `${zoom.value}px`);
+    zoom.onchange = () => {
+      for (const { thumb } of file.tiles) {
+        thumb.size = [Number(zoom.value), Number(zoom.value)];
+        repaint(thumb);
       }
-      (grid.children[Math.min(i, pages.length - 1)] ?? pagesView).focus();
-    }
-    card.onkeydown = (event) => {
-      const key = event.key.toLowerCase() === 'r' ? 'r' : event.key;
-      if (event.ctrlKey ? key !== 'ArrowLeft' && key !== 'ArrowRight' : key !== 'Delete' && key !== 'r') return;
-      event.preventDefault();
-      edit(key);
     };
-    card.ondragstart = (event) => startDrag(event, page, label);
-    card.ondragend = () => { dragged = null; };
-    actions.append(rotate, remove);
-    card.append(box, caption, actions);
-    tiles.set(page, { card, box, rotate, remove });
-    observeThumb({ ...page, box });
-    return card;
+    file.tiles = file.sheets.map(({ pageIndex }) => {
+      const label = `${file.name} p${pageIndex + 1}`;
+      const item = el('li'), box = el('div');
+      item.setAttribute('aria-label', label);
+      box.className = 'merge-thumb';
+      box.setAttribute('aria-hidden', 'true');
+      const pick = button('', () => setPicks(togglePick(picks, file, pageIndex)));
+      pick.className = 'merge-pick';
+      pick.setAttribute('aria-label', `Pick ${label}`);
+      pick.append(box, el('span', String(pageIndex + 1)));
+      const turn = () => {
+        if (busy) return;
+        file.sheets = rotatePage(file.sheets, pageIndex);
+        status.textContent = '';
+        updateControls();
+      };
+      const rotate = button('↻', turn);
+      rotate.title = 'Rotate 90° (R)';
+      rotate.setAttribute('aria-label', `Rotate 90° ${label}`);
+      item.onkeydown = (event) => {
+        if (event.ctrlKey || event.altKey || event.metaKey || event.key.toLowerCase() !== 'r') return;
+        event.preventDefault();
+        turn();
+      };
+      item.append(pick, rotate);
+      strip.append(item);
+      const thumb = { file, pageIndex, rotate: file.sheets[pageIndex].rotate, box, size: [112, 112] };
+      observeThumb(thumb);
+      return { pick, rotate, thumb };
+    });
+    bar.append(name, ...file.tools, zoom);
+    file.tools.push(zoom); // disabled with them while busy
+    row.append(bar, strip);
+    return file.row = row;
   }
 
   async function load(file) {
@@ -337,6 +351,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
       if (!list.includes(file)) return;
       file.pdf = pdf;
       file.pageCount = pdf.numPages;
+      file.sheets = expandPages([file]); // each page's rotation
       file.info.textContent += ` · ${pdf.numPages} ${pdf.numPages === 1 ? 'page' : 'pages'}`;
       observeThumb({ file, pageIndex: 0, rotate: 0, box: file.thumb, size: [144, 168] });
       setPages(setFilePages(list, pages, file, expandPages([file])));
@@ -381,6 +396,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
       file.range.value = file.range.defaultValue;
     };
     rangeLabel.append(file.range);
+    file.rangeLabel = rangeLabel;
     actions.className = 'merge-actions';
     file.zoom = iconButton(ZOOM_ICON, () => showPreview(file));
     file.remove = iconButton(TRASH_ICON, () => {
@@ -401,7 +417,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
       // only on the card itself: Ctrl+arrows in the range box move by words
       if (event.target !== file.card || !event.ctrlKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
       event.preventDefault();
-      if (busy || displaced.size) return;
+      if (busy) return;
       const from = list.indexOf(file);
       const next = moveFile(list, from, from + (event.key === 'ArrowLeft' ? -1 : 1));
       if (next === list) return;
@@ -442,11 +458,6 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
   function drop(event) {
     if (view.hidden) return false;
     if (!busy && event.dataTransfer.files.length) add([...event.dataTransfer.files].map(fromFile));
-    else if (!busy && pageMode && dragged) {
-      const to = [...grid.children].indexOf(event.target.closest?.('.merge-pages > li'));
-      const next = moveFile(pages, pages.indexOf(dragged), to);
-      if (next !== pages) setPages(next);
-    }
     dragged = null; // a file card has already moved (cards.ondragover)
     return true;
   }
@@ -482,7 +493,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
       for (const file of list) {
         if (!file.pdf) throw new Error(file.error.textContent);
       }
-      const bytes = await mergePdfs(pages, {
+      const bytes = await mergePdfs(pagesToMerge(pageMode, pages, picks), {
         bookmarkPerFile: perFile.input.checked, keepBookmarks: keep.input.checked,
       });
       let target = await tauri.core.invoke('test_merge_target');

@@ -18,9 +18,12 @@
   align-items: center;
 }
 .merge-toolbar { flex-wrap: wrap; justify-content: center; }
-.merge-views { margin-inline-start: 12px; display: flex; }
-.merge-views button[aria-pressed="true"] { background: var(--acc); border-color: var(--acc); color: #fff; }
-.merge-order, .merge-options {
+.merge-mode { display: flex; gap: 6px; align-items: center; margin-inline-start: 12px; }
+.merge-mode input { appearance: none; position: relative; width: 28px; height: 16px; margin: 0; border-radius: 8px; background: var(--muted); }
+.merge-mode input::before { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; }
+.merge-mode input:checked { background: var(--acc); }
+.merge-mode input:checked::before { left: 14px; }
+.merge-options {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 12px;
@@ -77,9 +80,19 @@
 #merge-tab .merge-actions button { display: inline-flex; padding: 4px; }
 .merge-files .merge-thumb { width: 160px; height: 184px; }
 .merge-files strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.merge-pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(106px, 1fr)); }
-#merge-tab .merge-pages li { border-top-width: 4px; }
-.merge-page-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Page mode: the whole tab scrolls (cards, then a row per file), the Merge button stays in view. */
+#merge-tab.page-mode { scroll-padding-bottom: 60px; }
+#merge-tab.page-mode .merge-files { flex: none; overflow: visible; }
+.merge-rows { display: flex; flex-direction: column; gap: 12px; }
+.merge-row { padding-top: 10px; border-top: 1px solid var(--line); }
+.merge-row-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center; }
+.merge-row-bar span { max-width: 24em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+#merge-tab .merge-row ol { display: flex; flex-wrap: wrap; justify-content: center; flex: none; min-height: 0; margin-top: 6px; overflow: visible; }
+#merge-tab .merge-row li:has([aria-pressed="true"]) { border-color: var(--acc); background: var(--sel); box-shadow: 0 0 0 2px var(--acc); }
+#merge-tab .merge-pick { display: flex; flex-direction: column; gap: 4px; align-items: center; padding: 0; border: 0; background: none; color: inherit; }
+.merge-row .merge-thumb { width: var(--thumb); height: var(--thumb); }
+.merge-row .merge-thumb canvas { max-width: 100%; max-height: 100%; }
+#merge-tab.page-mode footer { position: sticky; bottom: -14px; margin-bottom: -14px; padding-block: 8px 14px; background: var(--panel); }
 .merge-thumb {
   flex: none;
   width: 72px;
