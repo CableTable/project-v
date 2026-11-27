@@ -486,6 +486,35 @@ try {
     await merge.getByRole('checkbox', { name: 'Bookmark per file' }).check();
   });
 
+  await step('merge page mode with one file: a picked page merges, file mode still needs two (vmerge-b3)', async () => {
+    const merge = mergeView();
+    const mode = merge.getByRole('switch', { name: 'Page mode' });
+    const go = merge.locator('footer button');
+    await merge.getByRole('button', { name: `Remove ${basename(first)}`, exact: true }).click();
+    await order('one file left, 2 pages', second);
+    await mode.check();
+    assert(await go.isDisabled(), 'one file, no picks: disabled');
+    await pickPage(second, 2).click();
+    assert.equal(await go.textContent(), 'Merge PDF 1 page');
+    assert(await go.isEnabled(), 'one file, one pick: enabled');
+    await go.click();
+    await saved();
+    const target = join(root, 'out', 'merged.pdf');
+    // counted here too: locally checkMerged runs qpdf --check only
+    assert.equal((await PDFDocument.load(await readFile(target))).getPageCount(), 1);
+    await checkMerged(target, 1);
+
+    await page.keyboard.press('Control+Shift+M');
+    await mode.uncheck();
+    assert(await go.isDisabled(), 'file mode, one file: disabled');
+    // leave it as the next step expects it: both files, bookmark per file on
+    await merge.getByRole('button', { name: 'Restart', exact: true }).click();
+    await box('Remove all files?').getByRole('button', { name: 'Remove all' }).click();
+    await merge.getByRole('button', { name: 'Add files' }).click();
+    await order('both files again', first, second);
+    await merge.getByRole('checkbox', { name: 'Bookmark per file' }).check();
+  });
+
   await step('merge order strip: pick order, live drag, Ctrl+arrows, x un-picks, the saved PDF follows it', async () => {
     await page.keyboard.press('Control+Shift+M');
     const merge = mergeView();

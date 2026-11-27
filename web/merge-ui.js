@@ -273,7 +273,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
     az.disabled = za.disabled = busy || list.length < 2;
     mergeButton.textContent = !pageMode ? 'Merge' : !picks.length ? 'Choose pages'
       : `Merge PDF ${picks.length} ${picks.length === 1 ? 'page' : 'pages'}`;
-    mergeButton.disabled = busy || !tauri || list.length < 2 || list.some((file) => file.loading)
+    mergeButton.disabled = busy || !tauri || list.length < (pageMode ? 1 : 2) || list.some((file) => file.loading)
       || !(pageMode ? picks : pages).length;
     mode.input.disabled = perFile.input.disabled = keep.input.disabled = busy;
     mode.input.checked = pageMode;
