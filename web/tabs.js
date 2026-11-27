@@ -1,11 +1,14 @@
 // tabs.js — the open tabs (T2b): pure, no DOM, no pdf.js. A state is { list, active, next }; every function returns a new state.
 // A tab is { id, key, name, title, doc, error }: `key` says which file it is (its path), `doc` is the viewer's handle (null for a file that failed to open),
 // The viewer's document handle keeps the tab's scroll, zoom, page and find state.
+// The Merge tab (vmerge-a) is the one tab with a `kind`: no doc, and a key no file has, so there is at most one.
 
 // Windows paths: no case, either slash.
 export const pathKey = (key) => key.replace(/\//g, '\\').toLowerCase();
 
-export const emptyTabs = () => ({ list: [], active: null, next: 1 });
+export const MERGE_TAB = { kind: 'merge', key: 'merge:', name: 'Merge', title: 'Merge PDFs', doc: null, error: null };
+
+export const emptyTabs = () =>({ list: [], active: null, next: 1 });
 export const activeTab = (s) => s.list.find((t) => t.id === s.active);
 export const findByKey = (s, key) => s.list.find((t) => pathKey(t.key) === pathKey(key));
 

@@ -23,6 +23,12 @@ export function sortFiles(list, descending = false) {
 export const expandPages = (files) => files.flatMap((file) =>
   Array.from({ length: file.pageCount }, (_, pageIndex) => ({ file, pageIndex, rotate: 0 })));
 
+/** Reset: the files back in the order they were added (`added`), every page in again, unrotated. */
+export function resetFiles(list) {
+  const files = [...list].sort((a, b) => a.added - b.added);
+  return { files, pages: expandPages(files) };
+}
+
 export const rotatePage = (pages, index) => hasIndex(pages, index)
   ? pages.map((page, i) => i === index ? { ...page, rotate: (page.rotate + 90) % 360 } : page)
   : pages;

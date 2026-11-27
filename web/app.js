@@ -1,14 +1,14 @@
 // Opening: Ctrl+O dialog, drag-drop, launch / second-launch paths (T1). Tabs (T2b): one tab per open file, tabs.js holds the list, the page view is viewer.js.
 import { openPdf, show, closeDoc, setInstantTabs, setWheelLog } from './viewer.js';
 import { createSettings } from './settings-ui.js';
-import { emptyTabs, activeTab, findByKey, openTab, activate, closeTab, cycle, patchTab } from './tabs.js';
+import { MERGE_TAB, emptyTabs, activeTab, findByKey, openTab, activate, closeTab, cycle, patchTab } from './tabs.js';
 import { createMergeWindow } from './merge-ui.js';
 import { createRecentFiles } from './recent-ui.js';
 import { showFind } from './find-ui.js';
 import { canOpenInD, isOpenInDShortcut } from './open-in-d.js';
 import { OPEN_EXTS } from './ai-file.js';
 import { createPrint } from './print-ui.js';
-import { createCloseAsk } from './close-ask.js';
+import { createCloseAsk, createConfirm } from './close-ask.js';
 
 const tauri = window.__TAURI__;
 const $ = (id) => document.getElementById(id);
@@ -28,6 +28,8 @@ function render() {
   $('print').disabled = !now?.doc;
   showFind(now?.doc ?? null);
   show(now?.doc ?? null);
+  merge.show(now?.kind === 'merge');
+  $('empty').hidden = Boolean(now?.doc) || now?.kind === 'merge'; // show() leaves it alone when no doc was on screen before
   const strip = $('tabs');
   strip.hidden = !tabs.list.length;
   strip.replaceChildren(...tabs.list.map((t) => {
@@ -54,9 +56,14 @@ function render() {
   }), printRow);
 }
 
-function close(id) {
+async function close(id) {
   const t = tabs.list.find((x) => x.id === id);
   if (!t) return;
+  if (t.kind === 'merge') {
+    if (merge.busy()) return; // a save is running
+    if (merge.hasFiles() && !await askUser('Discard merge?', 'Discard')) return;
+    merge.start(); // frees its files
+  }
   tabs = closeTab(tabs, id);
   if (t.doc) {
     print.cancel((doc) => doc === t.doc); // before the pdf.js document is destroyed
@@ -130,8 +137,21 @@ let askClose = true; // ⚙ "Ask before closing several tabs" (T16)
 createSettings({ instantTabs: setInstantTabs, wheelLog, askClose: (on) => { askClose = on; } });
 const remember = createRecentFiles({ tauri, open: (path) => openAll([fromPath(path)]), say });
 
-const merge = createMergeWindow({ tauri, fromPath, fromFile, openResult: (path) => openAll([fromPath(path)], true) });
-const openMerge = () => merge.open(activeTab(tabs));
+const askUser = createConfirm();
+const merge = createMergeWindow({
+  tauri, fromPath, fromFile, askUser, host: document.querySelector('.body'), openResult: (path) => openAll([fromPath(path)], true),
+});
+/** One Merge tab at most: switch to it, else open an empty one. */
+function openMerge() {
+  const have = findByKey(tabs, MERGE_TAB.key);
+  if (have) tabs = activate(tabs, have.id);
+  else {
+    merge.start();
+    tabs = openTab(tabs, MERGE_TAB);
+  }
+  render();
+  merge.focus();
+}
 $('merge').onclick = openMerge;
 
 let openingInD = false;
@@ -194,8 +214,13 @@ if (tauri) {
   win.onCloseRequested(createCloseAsk({
     ask: () => askClose,
     count: () => tabs.list.length,
+    dirty: () => merge.hasFiles(),
+    asking: () => askUser.open(),
     api: {
-      exit: () => win.destroy().catch((e) => say(`Could not close the window: ${e}`)),
+      exit: async () => {
+        if (merge.hasFiles() && !await askUser('Discard merge?', 'Discard')) return;
+        win.destroy().catch((e) => say(`Could not close the window: ${e}`));
+      },
       closeTab: () => { const now = activeTab(tabs); if (now) close(now.id); },
       stopAsking: () => { const box = $('ask-close'); box.checked = false; box.dispatchEvent(new Event('change')); }, // saved by the ⚙ toggle
     },

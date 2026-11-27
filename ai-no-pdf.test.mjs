@@ -15,7 +15,7 @@ function fakeEl(tag) {
   return e;
 }
 globalThis.document = {
-  createElement: fakeEl, createTextNode: (t) => ({ textContent: t }), getElementById: () => fakeEl('x'),
+  createElement: fakeEl, createElementNS: (_, tag) => fakeEl(tag),createTextNode: (t) => ({ textContent: t }), getElementById: () => fakeEl('x'),
   addEventListener() {}, head: fakeEl('head'), body: fakeEl('body'),
 };
 globalThis.addEventListener = globalThis.removeEventListener = () => {}; // window listeners viewer.js adds at load (T17)
@@ -42,7 +42,12 @@ test('viewer openPdf: an .ai with no %PDF gives the NO_PDF_PART message', async 
 
 test('Merge load: an .ai with no %PDF shows the NO_PDF_PART message on its card', async () => {
   const win = createMergeWindow({ tauri: null, fromPath: (p) => p, fromFile: (f) => f, openResult() {} });
-  win.open({ name: 'logo.ai', read: async () => noPdf });
+  const drop = () => win.drop({ dataTransfer: { files: [{ name: 'logo.ai', read: async () => noPdf }] } });
+  assert.equal(drop(), false, 'a drop while the Merge tab is not shown is not taken');
+  win.start();
+  win.show(true);
+  assert.equal(win.hasFiles(), false, 'the tab starts empty');
+  assert.equal(drop(), true);
   await new Promise((r) => setTimeout(r, 20));
   const errors = made.filter((e) => e.textContent.includes(NO_PDF_PART));
   assert.equal(errors.length, 1);

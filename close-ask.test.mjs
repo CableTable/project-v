@@ -9,6 +9,11 @@ test('a window close asks only with 2+ tabs and the setting on; a second request
   assert.equal(closeRequest({ asking: false, tabs: 7, ask: true }), 'ask');
   assert.equal(closeRequest({ asking: false, tabs: 2, ask: false }), 'close');
   assert.equal(closeRequest({ asking: true, tabs: 2, ask: true }), 'ignore');
+  // vmerge-a: a Merge tab with files is asked about even where the window would close at once
+  assert.equal(closeRequest({ asking: false, tabs: 1, ask: true, dirty: true }), 'discard');
+  assert.equal(closeRequest({ asking: false, tabs: 2, ask: false, dirty: true }), 'discard');
+  assert.equal(closeRequest({ asking: false, tabs: 2, ask: true, dirty: true }), 'ask');
+  assert.equal(closeRequest({ asking: true, tabs: 1, ask: true, dirty: true }), 'ignore');
 });
 
 test('the three answers, with a fake close API; Don\'t ask again is saved only with Close all / Close this tab', () => {

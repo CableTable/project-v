@@ -39,6 +39,16 @@ test('merge keeps all pages in file and page order, including repeated files', a
   assert.deepEqual(merged.getPages().map((page) => page.getWidth()), [100, 200, 300, 400, 100, 200]);
 });
 
+test('merge Reset: files back in the order added, every page in again and unrotated, a loading file has none yet', () => {
+  const a = { name: 'a.pdf', added: 0, pageCount: 2 }, b = { name: 'b.pdf', added: 1 }, c = { name: 'c.pdf', added: 2, pageCount: 1 };
+  const list = [c, a, b];
+  const { files, pages } = merge.resetFiles(list);
+  assert.deepEqual(files, [a, b, c]);
+  assert.deepEqual(pages.map(({ file, pageIndex, rotate }) => [file.name, pageIndex, rotate]),
+    [['a.pdf', 0, 0], ['a.pdf', 1, 0], ['c.pdf', 0, 0]]);
+  assert.deepEqual(list, [c, a, b]);
+});
+
 test('merge rejects an empty list', async () => {
   await assert.rejects(mergePdfs([]), /add at least one PDF/i);
 });

@@ -343,49 +343,161 @@ try {
     }
   });
 
+  // The Merge tab (vmerge-a): its page, its tab in the strip, and the yes / Cancel box.
+  const mergeView = () => page.getByRole('region', { name: 'Merge PDFs' });
+  const mergeTabs = () => page.locator('#tabs .tl').getByText('Merge', { exact: true });
+  const box = (name) => page.getByRole('dialog', { name });
+  const names = () => mergeView().locator('ol li strong').allTextContents();
+  const order = (what, ...files) => until(what, async () => {
+    assert.deepEqual(await names(), files.map((file) => basename(file)));
+    return true;
+  });
+  const saved = () => page.getByRole('tab', { selected: true }).getByText('merged.pdf', { exact: true }).waitFor();
+
   await step('merge Add files and validate the saved PDF', async () => {
     await page.locator('#merge').click();
-    const dialog = page.getByRole('dialog', { name: 'Merge PDFs' });
-    await dialog.getByRole('button', { name: 'Clear all' }).click();
-    await dialog.getByRole('button', { name: 'Add files' }).click();
-    await dialog.getByText(basename(second), { exact: true }).waitFor();
-    await until('merge list is first, second', async () => {
-      assert.deepEqual(await dialog.locator('ol li strong').allTextContents(), [basename(first), basename(second)]);
-      return true;
-    });
-    await dialog.getByRole('button', { name: 'Merge', exact: true }).click();
-    await dialog.waitFor({ state: 'hidden' });
+    const merge = mergeView();
+    await merge.waitFor();
+    assert.equal(await mergeTabs().count(), 1);
+    assert.equal(await merge.locator('ol li').count(), 0, 'the Merge tab starts empty (the open PDF is not added)');
+    for (const name of ['Bookmark per file', "Keep files' bookmarks"]) {
+      assert.equal(await merge.getByRole('checkbox', { name }).isChecked(), false, `${name} is off`);
+    }
+    await merge.getByRole('button', { name: 'Add files' }).click();
+    await order('merge list is first, second', first, second);
+    await merge.getByRole('button', { name: 'Merge', exact: true }).click();
+    await saved(); // the result opens in its own tab and V switches to it
+    await merge.waitFor({ state: 'hidden' });
     await checkMerged(join(root, 'out', 'merged.pdf'), 1 + 2);
-    await page.getByRole('tab', { selected: true }).getByText('merged.pdf', { exact: true }).waitFor();
+    await page.keyboard.press('Control+Shift+M');
+    await merge.waitFor();
+    assert.equal(await mergeTabs().count(), 1, 'one Merge tab at most');
+    await order('the Merge tab keeps its files after the save', first, second);
   });
 
   await step('merge pages', async () => {
-    await page.locator('#merge').click();
-    const dialog = page.getByRole('dialog', { name: 'Merge PDFs' });
-    await dialog.getByRole('button', { name: 'Clear all' }).click();
-    await dialog.getByRole('button', { name: 'Add files' }).click();
-    await dialog.getByRole('button', { name: 'Pages', exact: true }).click();
-    const grid = dialog.getByRole('list', { name: 'Pages in merge order' });
+    const merge = mergeView();
+    await merge.getByRole('button', { name: 'Restart', exact: true }).click();
+    await box('Remove all files?').getByRole('button', { name: 'Remove all' }).click();
+    await until('Restart removed the files', async () => await merge.locator('ol li').count() === 0);
+    await merge.getByRole('button', { name: 'Add files' }).click();
+    await merge.getByRole('checkbox', { name: 'Bookmark per file' }).check();
+    await merge.getByRole('button', { name: 'Pages', exact: true }).click();
+    const grid = merge.getByRole('list', { name: 'Pages in merge order' });
     const removed = grid.getByRole('listitem', { name: `${basename(second)} p1` });
     await removed.press('Control+ArrowLeft');
-    await dialog.getByRole('button', { name: 'Files', exact: true }).click();
-    const range = dialog.getByRole('textbox', { name: `Page range for ${basename(second)}` });
+    await merge.getByRole('button', { name: 'Files', exact: true }).click();
+    const range = merge.getByRole('textbox', { name: `Page range for ${basename(second)}` });
     await until('page range disabled after removing a page', () => range.isDisabled());
-    await dialog.getByRole('button', { name: 'Reset page order' }).click();
+    await merge.getByRole('button', { name: 'Reset page order' }).click();
     await until('page range enabled after Reset page order', () => range.isEnabled());
-    await dialog.getByRole('button', { name: 'Pages', exact: true }).click();
+    await merge.getByRole('button', { name: 'Pages', exact: true }).click();
     await removed.press('Delete');
     const rotated = grid.getByRole('listitem', { name: `${basename(second)} p2` });
     await rotated.getByRole('button', { name: /Rotate/ }).click();
-    await dialog.getByRole('button', { name: 'Files', exact: true }).click();
+    await merge.getByRole('button', { name: 'Files', exact: true }).click();
     await until("page range value '2'", async () => await range.inputValue() === '2');
-    await dialog.getByRole('button', { name: 'Merge', exact: true }).click();
-    await dialog.waitFor({ state: 'hidden' });
+    await merge.getByRole('button', { name: 'Merge', exact: true }).click();
+    await saved();
     const target = join(root, 'out', 'merged.pdf');
     const pdf = await PDFDocument.load(await readFile(target));
     assert.deepEqual(pdf.getPages().map((page) => page.getRotation().angle), [0, 90]);
     assert(pdf.catalog.has(PDFName.of('Outlines')));
     await checkMerged(target, 2);
+  });
+
+  await step('merge tab: file cards, live drag, preview, Reset / Restart, ask on close', async () => {
+    await page.keyboard.press('Control+Shift+M');
+    const merge = mergeView();
+    const card = (file) => merge.getByRole('listitem', { name: basename(file), exact: true });
+    const range = merge.getByRole('textbox', { name: `Page range for ${basename(second)}` });
+    await order('files as added', first, second);
+
+    // side by side, thumbnail drawn, name below it, preview + trash above, no up / down arrows
+    await card(second).locator('canvas').waitFor();
+    await card(first).locator('canvas').waitFor();
+    const [a, b] = [await card(first).boundingBox(), await card(second).boundingBox()];
+    assert(Math.abs(a.y - b.y) < 1 && b.x >= a.x + a.width, `cards are not side by side: ${JSON.stringify([a, b])}`);
+    const y = async (selector) => (await card(first).locator(selector).first().boundingBox()).y;
+    assert(await y('.merge-actions') < await y('.merge-thumb') && await y('.merge-thumb') < await y('strong'), 'icons, thumbnail, name');
+    assert.equal(await merge.getByRole('button', { name: /^Move / }).count(), 0);
+
+    // keyboard reorder, sort, then Reset: added order, every page, the box unchanged, no question
+    await card(second).focus();
+    await page.keyboard.press('Control+ArrowLeft');
+    await order('Ctrl+Left moves the card', second, first);
+    await merge.getByRole('button', { name: 'Reset', exact: true }).click();
+    await order('Reset: added order', first, second);
+    await until('Reset: all pages again', async () => await range.inputValue() === '1-2');
+    assert.equal(await merge.getByRole('checkbox', { name: 'Bookmark per file' }).isChecked(), true);
+    await merge.getByRole('button', { name: 'Sort Z–A' }).click();
+    await order('Z-A', second, first);
+    await merge.getByRole('button', { name: 'Sort A–Z' }).click();
+    await order('A-Z', first, second);
+
+    // live drag: the other card shifts while the button is still down
+    const from = await card(first).locator('.merge-thumb').boundingBox();
+    const to = await card(second).locator('.merge-thumb').boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 10 });
+    await page.mouse.move(to.x + to.width / 2 + 2, to.y + to.height / 2);
+    await order('shifted before the drop', second, first);
+    await page.mouse.up();
+    await order('kept after the drop', second, first);
+
+    await card(first).getByRole('button', { name: `Preview ${basename(first)}` }).click();
+    await box(`Preview ${basename(first)}`).locator('canvas').waitFor();
+    await page.keyboard.press('Escape');
+    await box(`Preview ${basename(first)}`).waitFor({ state: 'hidden' });
+
+    assert(await merge.evaluate((el) => {
+      const event = new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    }), 'Ctrl+P on the Merge tab must be prevented');
+    await page.keyboard.press('Escape');
+    await merge.waitFor(); // Esc does nothing
+
+    // shots: light, dark, and a 1024 px window
+    await mkdir('shots', { recursive: true });
+    for (const scheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.screenshot({ path: `shots/vmerge-a-${scheme}.png` });
+    }
+    await page.emulateMedia({ colorScheme: null });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 700, deviceScaleFactor: 1, mobile: false });
+    try {
+      await page.screenshot({ path: 'shots/vmerge-a-1024.png' });
+    } finally {
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+    }
+
+    // Closing V (WM_CLOSE) with files in the Merge tab asks "Discard merge?" after the tabs box; Cancel keeps the window.
+    const [primary] = children.keys();
+    execFileSync('taskkill.exe', ['/PID', String(primary.pid)], { windowsHide: true });
+    await box(/^Close all \d+ tabs\?$/).getByRole('button', { name: 'Close all' }).click();
+    await box('Discard merge?').getByRole('button', { name: 'Cancel' }).click();
+    await order('window and merge still there', second, first);
+
+    // trash, then closing the tab: Cancel keeps it, Discard closes it, a new one starts empty
+    await card(second).getByRole('button', { name: `Remove ${basename(second)}` }).click();
+    await order('trash removes the card', first);
+    await page.keyboard.press('Control+w');
+    await box('Discard merge?').getByRole('button', { name: 'Cancel' }).click();
+    assert.equal(await mergeTabs().count(), 1);
+    await merge.getByRole('button', { name: 'Restart', exact: true }).click();
+    await box('Remove all files?').getByRole('button', { name: 'Cancel' }).click();
+    await order('Restart cancelled', first);
+    await page.keyboard.press('Control+w');
+    await box('Discard merge?').getByRole('button', { name: 'Discard' }).click();
+    await until('Merge tab closed', async () => await mergeTabs().count() === 0);
+    await page.locator('#merge').click();
+    assert.equal(await merge.locator('ol li').count(), 0);
+    assert.equal(await merge.getByRole('checkbox', { name: 'Bookmark per file' }).isChecked(), false);
+    await page.keyboard.press('Control+w'); // empty: no question
+    await until('empty Merge tab closed', async () => await mergeTabs().count() === 0);
   });
 
   await step('Ctrl+Shift+D requests a ProjectD.exe pick', async () => {
@@ -401,17 +513,14 @@ try {
     await page.evaluate(() => { window.printCalls = 0; window.print = () => { window.printCalls++; }; });
     const imgCount = () => page.locator('#print-root img').count();
 
+    // nothing to print on the Merge tab
     await page.locator('#merge').click();
-    const dialog = page.getByRole('dialog', { name: 'Merge PDFs' });
-    await dialog.waitFor();
-    assert(await dialog.evaluate((el) => {
-      const event = new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true });
-      el.dispatchEvent(event);
-      return event.defaultPrevented;
-    }), 'Ctrl+P in the Merge dialog must be prevented');
+    await mergeView().waitFor();
+    await page.keyboard.press('Control+p');
     assert.equal(await imgCount(), 0);
-    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
-    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => window.printCalls), 0);
+    await page.keyboard.press('Control+w');
+    await mergeView().waitFor({ state: 'hidden' });
 
     for (const press of [() => page.keyboard.press('Control+p'), () => page.locator('#print').click()]) {
       const before = await page.evaluate(() => window.printCalls);
@@ -447,15 +556,25 @@ try {
     timing('1000-page open', start);
 
     await page.locator('#merge').click();
-    const dialog = page.getByRole('dialog', { name: 'Merge PDFs' });
+    const merge = mergeView();
+    // the tab starts empty: add the 1000 pages by a drop
+    const data = await page.evaluateHandle((bytes) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([Uint8Array.from(atob(bytes), (c) => c.charCodeAt(0))], '1000-pages.pdf', { type: 'application/pdf' }));
+      return transfer;
+    }, (await readFile(large)).toString('base64'));
+    await merge.dispatchEvent('drop', { dataTransfer: data });
+    await merge.locator('.merge-info').filter({ hasText: '1000 pages' }).waitFor();
     const pagesStart = performance.now();
-    await dialog.getByRole('button', { name: 'Pages', exact: true }).click();
-    const grid = dialog.getByRole('list', { name: 'Pages in merge order' });
+    await merge.getByRole('button', { name: 'Pages', exact: true }).click();
+    const grid = merge.getByRole('list', { name: 'Pages in merge order' });
     await grid.locator('canvas').first().waitFor();
     timing('1000-page Pages view to first thumbnail', pagesStart);
     await until('1000 page items', async () => await grid.getByRole('listitem').count() === 1000);
     assert(await grid.locator('canvas').count() < 1000);
-    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await page.keyboard.press('Control+w');
+    await box('Discard merge?').getByRole('button', { name: 'Discard' }).click();
+    await merge.waitFor({ state: 'hidden' });
   });
 
   await step('scroll to page 1000', async () => {
