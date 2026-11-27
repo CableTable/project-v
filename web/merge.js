@@ -35,6 +35,9 @@ export function togglePick(picks, file, pageIndex) {
   return next.length < picks.length ? next : [...picks, { file, pageIndex }];
 }
 
+/** A removed file's pages leave the order strip. */
+export const keepPicks = (picks, files) => picks.filter(({ file }) => files.includes(file));
+
 const PICK_TOOLS = {
   all: () => true, none: () => false, invert: (i, on) => !on, odd: (i) => i % 2 === 0, even: (i) => i % 2 === 1,
 };
@@ -66,21 +69,6 @@ export function pagesByFile(pages) {
   return groups;
 }
 
-export function displacedFiles(files, pages) {
-  const order = new Map(files.map((file, index) => [file, index]));
-  const displaced = new Set();
-  let highest = -1, lowest = files.length;
-  for (let i = 0; i < pages.length; i++) {
-    const left = pages[i].file, right = pages[pages.length - 1 - i].file;
-    const a = order.get(left), b = order.get(right);
-    if (a < highest) displaced.add(left);
-    if (b > lowest) displaced.add(right);
-    highest = Math.max(highest, a);
-    lowest = Math.min(lowest, b);
-  }
-  return displaced;
-}
-
 export function pageRange(pages) {
   const ranges = [];
   for (const { pageIndex } of pages) {
@@ -101,7 +89,6 @@ export function setFilePages(files, pages, file, replacement) {
 }
 
 export function replacePageRange(files, pages, file, range) {
-  if (displacedFiles(files, pages).has(file)) return pages;
   const indices = new Set();
   for (const part of range.trim() ? range.split(',') : []) {
     const match = /^(\d+)\s*(?:-\s*(\d+))?$/.exec(part.trim());

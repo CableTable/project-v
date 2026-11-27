@@ -4,7 +4,7 @@ import { degrees, PDFDocument, PDFHexString, PDFName } from './web/vendor/pdf-li
 import * as merge from './web/merge.js';
 
 const {
-  addFiles, clearFiles, displacedFiles, expandPages, loadMergePdf, mergePdfs, moveDown, moveFile,
+  addFiles, clearFiles, expandPages, loadMergePdf, mergePdfs, moveDown, moveFile,
   moveUp, pageRange, removeFile, replacePageRange, rotatePage, sortFiles,
 } = merge;
 
@@ -85,6 +85,26 @@ test('page picks: kept while page mode is off (whole files / ranges merge then),
   assert.deepEqual(merged(true, merge.resetFiles([a]).picks), []);
 });
 
+test('order strip: a pick moves, the merged pages follow it, and a later pick still goes to the end', () => {
+  const a = { name: 'a', pageCount: 2 }, b = { name: 'b', pageCount: 2 };
+  let picks = merge.togglePick(merge.togglePick([], b, 1), a, 0); // b2 a1
+  picks = moveFile(picks, 1, 0);
+  assert.equal(short(picks), 'a1 b2');
+  picks = merge.togglePick(picks, a, 1);
+  assert.equal(short(picks), 'a1 b2 a2');
+  assert.equal(short(merge.pagesToMerge(true, expandPages([a, b]), picks)), 'a1 b2 a2');
+  assert.equal(short(merge.togglePick(picks, b, 1)), 'a1 a2', 'x un-picks, the others keep their order');
+});
+
+test('order strip: removing a file drops its picked pages and keeps the order of the rest', () => {
+  const a = { name: 'a', pageCount: 2 }, b = { name: 'b', pageCount: 2 }, c = { name: 'c', pageCount: 1 };
+  const picks = [[b, 1], [a, 0], [c, 0], [b, 0]].reduce((all, [file, i]) => merge.togglePick(all, file, i), []);
+  const kept = merge.keepPicks(picks, removeFile([a, b, c], 1));
+  assert.equal(short(kept), 'a1 c1');
+  assert.strictEqual(kept[0], picks[1], 'the same pick: its tile in the strip stays');
+  assert.equal(short(picks), 'b2 a1 c1 b1', 'the input is not changed');
+});
+
 test('merge rejects an empty list', async () => {
   await assert.rejects(mergePdfs([]), /add at least one PDF/i);
 });
@@ -139,11 +159,6 @@ test('page edits are immutable and a range replaces its own file block', () => {
   for (const bad of ['0', '1,1', '4-5', '4-2', '1,', '1.5']) {
     assert.throws(() => replacePageRange(files, reordered, a, bad), /page/i);
   }
-  const custom = moveFile(replaced, 3, 1);
-  assert.deepEqual(displacedFiles(files, custom), new Set([a, b]));
-  assert.strictEqual(replacePageRange(files, custom, a, '1'), custom);
-  assert.deepEqual(replacePageRange(files, custom, c, '1'), custom);
-  assert.equal(displacedFiles(files, replaced).size, 0);
 });
 
 test('merge writes remapped outlines for kept pages and promotes kept children', async () => {

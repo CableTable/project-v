@@ -1,5 +1,5 @@
 import {
-  addFiles, clearFiles, expandPages, loadMergePdf, mergePdfs, moveFile, pageRange, pagesByFile, pagesToMerge,
+  addFiles, clearFiles, expandPages, keepPicks, loadMergePdf, mergePdfs, moveFile, pageRange, pagesByFile, pagesToMerge,
   removeFile, replacePageRange, resetFiles, rotatePage, selectPicks, setFilePages, sortFiles, togglePick,
 } from './merge.js';
 
@@ -123,6 +123,17 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
   };
   const rows = el('div');
   rows.className = 'merge-rows';
+  const order = el('div'), strip = el('ol');
+  order.className = 'merge-order';
+  strip.setAttribute('aria-label', 'Picked pages in merge order');
+  order.append(el('h3', 'Correct the order of the pages if necessary'), strip);
+  // As with the file cards: the other pages shift while one is dragged over them.
+  strip.ondragover = (event) => {
+    if (busy || !picks.includes(dragged)) return;
+    const to = picks.findIndex((page) => stripItems.get(page).item.contains(event.target));
+    const next = moveFile(picks, picks.indexOf(dragged), to);
+    if (next !== picks) setPicks(next);
+  };
   const options = el('div');
   options.className = 'merge-options';
   const perFile = checkbox('Bookmark per file');
@@ -134,7 +145,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
   mergeButton.className = 'acc';
   const footer = el('footer');
   footer.append(status, mergeButton);
-  view.append(title, toolbar, hint, cards, rows, options, footer);
+  view.append(title, toolbar, hint, cards, rows, order, options, footer);
   host.append(view);
 
   const preview = el('dialog'), previewBox = el('div');
@@ -213,6 +224,74 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
         repaint(thumb);
       }
     }
+    showOrder();
+  }
+
+  const stripItems = new Map(); // pick -> its tile in the order strip
+
+  function makeStripItem(page) {
+    const { file, pageIndex } = page;
+    const label = `${file.name} p${pageIndex + 1}`;
+    const item = el('li'), box = el('div');
+    item.tabIndex = 0;
+    item.title = `${label}: drag, or Ctrl+Left / Ctrl+Right, to reorder`;
+    item.setAttribute('aria-label', label);
+    box.className = 'merge-thumb';
+    box.setAttribute('aria-hidden', 'true');
+    const remove = button('×', () => {
+      const index = picks.indexOf(page);
+      setPicks(togglePick(picks, file, pageIndex));
+      (stripItems.get(picks[index] ?? picks.at(-1))?.remove ?? file.tiles[pageIndex].pick).focus();
+    });
+    remove.title = 'Un-pick';
+    remove.setAttribute('aria-label', `Un-pick ${label}`);
+    item.onkeydown = (event) => {
+      if (event.target !== item || !event.ctrlKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+      event.preventDefault();
+      if (busy) return;
+      const from = picks.indexOf(page);
+      const next = moveFile(picks, from, from + (event.key === 'ArrowLeft' ? -1 : 1));
+      if (next === picks) return;
+      setPicks(next);
+      item.focus();
+    };
+    item.ondragstart = (event) => {
+      startDrag(event, page, label);
+      orderBefore = picks;
+    };
+    item.ondragend = (event) => {
+      if (event.dataTransfer.dropEffect === 'none' && orderBefore) setPicks(orderBefore); // a cancelled drag changes nothing
+      dragged = orderBefore = null;
+    };
+    item.append(remove, box, el('span', String(pageIndex + 1)));
+    const thumb = { file, pageIndex, rotate: file.sheets[pageIndex].rotate, box, size: [112, 112] };
+    observeThumb(thumb);
+    return { item, remove, thumb };
+  }
+
+  /** The "correct the order" strip: the picked pages only, in pick order. */
+  function showOrder() {
+    const kept = new Set(picks);
+    for (const [page, { item, thumb }] of stripItems) {
+      if (kept.has(page)) continue;
+      releaseThumb(thumb.box);
+      item.remove();
+      stripItems.delete(page);
+    }
+    const items = picks.map((page) => {
+      if (!stripItems.has(page)) stripItems.set(page, makeStripItem(page));
+      const { item, remove, thumb } = stripItems.get(page);
+      item.draggable = !busy;
+      remove.disabled = busy;
+      if (thumb.rotate !== page.file.sheets[page.pageIndex].rotate) {
+        thumb.rotate = page.file.sheets[page.pageIndex].rotate;
+        repaint(thumb);
+      }
+      return item;
+    });
+    // only on a new order: re-inserting the tiles would drop the focus
+    if (items.some((item, i) => strip.children[i] !== item)) strip.replaceChildren(...items);
+    order.hidden = !pageMode || !picks.length;
   }
 
   function inFileOrder() {
@@ -255,7 +334,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
       file.task?.destroy().catch(console.warn);
     }
     list = next;
-    picks = picks.filter(({ file }) => kept.has(file));
+    picks = keepPicks(picks, next);
     const scrollTop = cards.scrollTop;
     cards.replaceChildren(...list.map((file) => file.card));
     cards.scrollTop = scrollTop;

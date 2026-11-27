@@ -486,6 +486,92 @@ try {
     await merge.getByRole('checkbox', { name: 'Bookmark per file' }).check();
   });
 
+  await step('merge order strip: pick order, live drag, Ctrl+arrows, x un-picks, the saved PDF follows it', async () => {
+    await page.keyboard.press('Control+Shift+M');
+    const merge = mergeView();
+    const mode = merge.getByRole('switch', { name: 'Page mode' });
+    const strip = merge.getByRole('list', { name: 'Picked pages in merge order' });
+    const label = (file, n) => `${basename(file)} p${n}`;
+    const tile = (file, n) => strip.getByRole('listitem', { name: label(file, n), exact: true });
+    const inStrip = (what, ...labels) => until(what, async () => {
+      assert.deepEqual(await strip.locator('li').evaluateAll((items) => items.map((item) => item.getAttribute('aria-label'))), labels);
+      return true;
+    });
+    const turn = (file, n) => merge.getByRole('button', { name: `Rotate 90° ${label(file, n)}` }).click();
+    const [a, b, c] = [label(second, 2), label(first, 1), label(second, 1)];
+
+    await mode.check();
+    await until('no picks: no strip', async () => !await strip.isVisible());
+    await pickPage(second, 2).click();
+    await inStrip('first pick', a);
+    await pickPage(first, 1).click(); // its card is first, picked later: goes to the end
+    await inStrip('later pick at the end', a, b);
+    await pickPage(second, 1).click();
+    await inStrip('three picks', a, b, c);
+    // the rotation tells the saved pages apart: second p2 = 180, first p1 = 0, second p1 = 90
+    await turn(second, 2);
+    await turn(second, 2);
+    await turn(second, 1);
+    for (const [file, n] of [[second, 2], [first, 1], [second, 1]]) await tile(file, n).locator('canvas').waitFor();
+
+    // live drag: third tile onto the first, the others shift while the button is still down
+    await strip.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    const from = await tile(second, 1).locator('.merge-thumb').boundingBox();
+    const to = await tile(second, 2).locator('.merge-thumb').boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 10 });
+    await page.mouse.move(to.x + to.width / 2 + 2, to.y + to.height / 2);
+    await inStrip('shifted before the drop', c, a, b);
+    await page.mouse.up();
+    await inStrip('kept after the drop', c, a, b);
+
+    await tile(second, 1).focus();
+    await page.keyboard.press('Control+ArrowRight');
+    await inStrip('Ctrl+Right', a, c, b);
+    await page.keyboard.press('Control+ArrowRight');
+    await inStrip('Ctrl+Right again: the focus stayed on the tile', a, b, c);
+    await page.keyboard.press('Control+ArrowLeft');
+    await inStrip('Ctrl+Left', a, c, b);
+
+    await mode.uncheck();
+    await until('page mode off: no strip', async () => !await strip.isVisible());
+    await mode.check();
+    await inStrip('page mode on again: same picks, same order', a, c, b);
+
+    await mkdir('shots', { recursive: true });
+    await strip.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    for (const scheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.screenshot({ path: `shots/vmerge-b2-${scheme}.png` });
+    }
+    await page.emulateMedia({ colorScheme: null });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 700, deviceScaleFactor: 1, mobile: false });
+    try {
+      await strip.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+      await page.screenshot({ path: 'shots/vmerge-b2-1024.png' });
+    } finally {
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+    }
+
+    await strip.getByRole('button', { name: `Un-pick ${c}`, exact: true }).click();
+    await inStrip('x un-picks', a, b);
+    await until('its row page is off', async () => await pickPage(second, 1).getAttribute('aria-pressed') === 'false');
+    await merge.getByRole('button', { name: 'Merge PDF 2 pages', exact: true }).click();
+    await saved();
+    const target = join(root, 'out', 'merged.pdf');
+    const pdf = await PDFDocument.load(await readFile(target));
+    assert.deepEqual(pdf.getPages().map((page) => page.getRotation().angle), [180, 0], 'saved in strip order');
+    await checkMerged(target, 2);
+
+    // Reset clears the strip; leave page mode off and the pages unrotated for the next step
+    await page.keyboard.press('Control+Shift+M');
+    await merge.getByRole('button', { name: 'Reset', exact: true }).click();
+    await inStrip('Reset empties the strip');
+    await mode.uncheck();
+  });
+
   await step('merge tab: file cards, live drag, preview, Reset / Restart, ask on close', async () => {
     await page.keyboard.press('Control+Shift+M');
     const merge = mergeView();
