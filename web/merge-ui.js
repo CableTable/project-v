@@ -11,6 +11,7 @@ const el = (tag, text = '') => Object.assign(document.createElement(tag), { text
 const button = (text, run) => Object.assign(el('button', text), { type: 'button', onclick: run });
 const ZOOM_ICON = 'M11 5a6 6 0 1 0 0 12a6 6 0 0 0 0-12z M20 20l-4.2-4.2 M8.5 11h5 M11 8.5v5';
 const TRASH_ICON = 'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v5 M14 11v5';
+const MIN_ZOOM = 0.25, MAX_ZOOM = 4, BUTTON_ZOOM = 1.25, WHEEL_ZOOM = 1.1; // magnifier: 1 = the page fits the window
 function iconButton(d, run) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -38,7 +39,7 @@ function clearThumb(thumb) {
 }
 
 async function paintThumb(thumb) {
-  const { file, pageIndex, rotate, box, size: [maxWidth, maxHeight] = [72, 88] } = thumb;
+  const { file, pageIndex, rotate, box, size: [maxWidth, maxHeight] = [72, 88], dpr = 1 } = thumb;
   const job = {};
   thumb.job = job;
   try {
@@ -46,10 +47,11 @@ async function paintThumb(thumb) {
     if (thumb.job !== job) return;
     const rotation = (page.rotate + rotate) % 360;
     const { width, height } = page.getViewport({ scale: 1, rotation });
-    const viewport = page.getViewport({ scale: Math.min(maxWidth / width, maxHeight / height), rotation });
+    const viewport = page.getViewport({ scale: Math.min(maxWidth / width, maxHeight / height) * dpr, rotation });
     const canvas = job.canvas = el('canvas');
     canvas.width = Math.ceil(viewport.width);
     canvas.height = Math.ceil(viewport.height);
+    if (dpr !== 1) Object.assign(canvas.style, { width: `${canvas.width / dpr}px`, height: `${canvas.height / dpr}px` });
     job.render = page.render({ canvasContext: canvas.getContext('2d'), viewport });
     await job.render.promise;
     job.render = null;
@@ -88,7 +90,6 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
   const resetButton = button('Reset', () => {
     const next = resetFiles(list);
     ({ pages, picks } = next);
-    for (const file of next.files) file.sheets = expandPages([file]);
     setList(next.files);
   });
   resetButton.title = 'Keep the files: added order, all pages';
@@ -148,26 +149,95 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
   view.append(title, toolbar, hint, cards, rows, order, options, footer);
   host.append(view);
 
-  const preview = el('dialog'), previewBox = el('div');
+  const preview = el('dialog'), previewBox = el('div'), magnifierTools = el('span');
   preview.id = 'merge-preview';
   previewBox.className = 'merge-preview-page';
   const previewThumb = { box: previewBox };
-  preview.append(button('Close', () => preview.close()), previewBox);
+  // The magnifier (page mode) is this dialog too: full window, zoom and rotate before Close.
+  let zoom = 1, fit;
+  for (const [text, label, run] of [
+    ['−', 'Zoom out', () => zoomBy(1 / BUTTON_ZOOM)], ['+', 'Zoom in', () => zoomBy(BUTTON_ZOOM)],
+    ['↺', 'Rotate left', () => turnMagnified(-1)], ['↻', 'Rotate right', () => turnMagnified(1)],
+  ]) {
+    const control = button(text, run);
+    control.title = label;
+    control.setAttribute('aria-label', label);
+    magnifierTools.append(control);
+  }
+  const previewBar = el('div');
+  previewBar.append(magnifierTools, button('Close', () => preview.close()));
+  preview.append(previewBar, previewBox);
   preview.onclose = () => clearThumb(previewThumb);
-  preview.onclick = (event) => { if (event.target === preview) preview.close(); };
+  preview.onclick = (event) => { if (event.target === preview && magnifierTools.hidden) preview.close(); }; // not the full-window magnifier
+  preview.addEventListener('wheel', (event) => {
+    if (!event.ctrlKey) return;
+    event.preventDefault(); // no page zoom of the whole window
+    event.stopPropagation();
+    if (!magnifierTools.hidden && event.deltaY) zoomBy(event.deltaY < 0 ? WHEEL_ZOOM : 1 / WHEEL_ZOOM);
+  }, { passive: false });
   preview.onkeydown = (event) => {
     event.stopPropagation(); // no Ctrl+W / Ctrl+Tab under the box
     if (event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'p') event.preventDefault(); // else WebView2 prints the app UI
   };
   document.body.append(preview);
 
+  function openDialog(label, magnifier) {
+    clearThumb(previewThumb);
+    preview.setAttribute('aria-label', label);
+    preview.classList.toggle('merge-magnifier', magnifier);
+    magnifierTools.hidden = !magnifier;
+    preview.showModal();
+  }
+
   function showPreview(file) {
     if (!file.pdf) return;
-    clearThumb(previewThumb);
-    preview.setAttribute('aria-label', `Preview ${file.name}`);
-    preview.showModal();
-    Object.assign(previewThumb, { file, pageIndex: 0, rotate: 0, size: [innerWidth - 96, innerHeight - 130] });
+    openDialog(`Preview ${file.name}`, false);
+    Object.assign(previewThumb, { file, pageIndex: 0, rotate: 0, size: [innerWidth - 96, innerHeight - 130], dpr: 1 });
     paintThumb(previewThumb);
+  }
+
+  function magnify(file, pageIndex) {
+    openDialog(`Magnified ${file.name} p${pageIndex + 1}`, true);
+    zoom = 1;
+    fit = [previewBox.clientWidth - 8, previewBox.clientHeight - 8];
+    Object.assign(previewThumb, { file, pageIndex, rotate: file.sheets[pageIndex].rotate, dpr: devicePixelRatio });
+    paintMagnifier();
+  }
+
+  function paintMagnifier() {
+    previewThumb.job?.render?.cancel(); // the old picture stays until the new one is drawn
+    previewThumb.size = fit.map((side) => side * zoom);
+    paintThumb(previewThumb);
+  }
+
+  function zoomBy(factor) {
+    // shortcut: the whole page is drawn, so 4x the window at most (canvas memory); draw only the visible part for more
+    const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
+    if (next === zoom) return;
+    zoom = next;
+    paintMagnifier();
+  }
+
+  function turnMagnified(direction) {
+    const { file, pageIndex } = previewThumb;
+    turnPage(file, pageIndex, direction);
+    previewThumb.rotate = file.sheets[pageIndex].rotate;
+    paintMagnifier();
+  }
+
+  /** One rotation per page (`file.sheets`): its tile, strip tile, magnifier and the merged file. */
+  function turnPage(file, pageIndex, direction) {
+    if (busy) return;
+    file.sheets = rotatePage(file.sheets, pageIndex, direction);
+    status.textContent = '';
+    updateControls();
+  }
+
+  function magnifyButton(file, pageIndex) {
+    const control = iconButton(ZOOM_ICON, () => magnify(file, pageIndex));
+    control.title = 'Magnify';
+    control.setAttribute('aria-label', `Magnify ${file.name} p${pageIndex + 1}`);
+    return control;
   }
 
   const thumbs = new Map();
@@ -216,9 +286,9 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
       if (!file.row) continue;
       for (const control of file.tools) control.disabled = busy;
       const on = new Set(picked.get(file)?.map(({ pageIndex }) => pageIndex));
-      for (const [i, { pick, rotate, thumb }] of file.tiles.entries()) {
+      for (const [i, { pick, rotate, magnifier, thumb }] of file.tiles.entries()) {
         pick.setAttribute('aria-pressed', String(on.has(i)));
-        pick.disabled = rotate.disabled = busy;
+        pick.disabled = rotate.disabled = magnifier.disabled = busy;
         if (thumb.rotate === file.sheets[i].rotate) continue; // turned by the button, or back by Reset
         thumb.rotate = file.sheets[i].rotate;
         repaint(thumb);
@@ -263,10 +333,11 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
       if (event.dataTransfer.dropEffect === 'none' && orderBefore) setPicks(orderBefore); // a cancelled drag changes nothing
       dragged = orderBefore = null;
     };
-    item.append(remove, box, el('span', String(pageIndex + 1)));
+    const magnifier = magnifyButton(file, pageIndex);
+    item.append(remove, box, el('span', String(pageIndex + 1)), magnifier);
     const thumb = { file, pageIndex, rotate: file.sheets[pageIndex].rotate, box, size: [112, 112] };
     observeThumb(thumb);
-    return { item, remove, thumb };
+    return { item, remove, magnifier, thumb };
   }
 
   /** The "correct the order" strip: the picked pages only, in pick order. */
@@ -280,9 +351,9 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
     }
     const items = picks.map((page) => {
       if (!stripItems.has(page)) stripItems.set(page, makeStripItem(page));
-      const { item, remove, thumb } = stripItems.get(page);
+      const { item, remove, magnifier, thumb } = stripItems.get(page);
       item.draggable = !busy;
-      remove.disabled = busy;
+      remove.disabled = magnifier.disabled = busy;
       if (thumb.rotate !== page.file.sheets[page.pageIndex].rotate) {
         thumb.rotate = page.file.sheets[page.pageIndex].rotate;
         repaint(thumb);
@@ -384,12 +455,7 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
       pick.className = 'merge-pick';
       pick.setAttribute('aria-label', `Pick ${label}`);
       pick.append(box, el('span', String(pageIndex + 1)));
-      const turn = () => {
-        if (busy) return;
-        file.sheets = rotatePage(file.sheets, pageIndex);
-        status.textContent = '';
-        updateControls();
-      };
+      const turn = () => turnPage(file, pageIndex, 1);
       const rotate = button('↻', turn);
       rotate.title = 'Rotate 90° (R)';
       rotate.setAttribute('aria-label', `Rotate 90° ${label}`);
@@ -398,11 +464,14 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
         event.preventDefault();
         turn();
       };
-      item.append(pick, rotate);
+      const magnifier = magnifyButton(file, pageIndex), actions = el('div');
+      actions.className = 'merge-actions';
+      actions.append(rotate, magnifier);
+      item.append(pick, actions);
       strip.append(item);
       const thumb = { file, pageIndex, rotate: file.sheets[pageIndex].rotate, box, size: [112, 112] };
       observeThumb(thumb);
-      return { pick, rotate, thumb };
+      return { pick, rotate, magnifier, thumb };
     });
     bar.append(name, ...file.tools, zoom);
     file.tools.push(zoom); // disabled with them while busy
@@ -605,7 +674,10 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
 
   return {
     start, drop,
-    show: (on) => { view.hidden = !on; },
+    show: (on) => {
+      view.hidden = !on;
+      if (!on) preview.close(); // a file opened from outside switches the tab: no box left over it
+    },
     focus: () => pickButton.focus(),
     hasFiles: () => list.length > 0,
     busy: () => busy,

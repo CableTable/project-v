@@ -572,6 +572,101 @@ try {
     await mode.uncheck();
   });
 
+  await step('merge magnifier: zoom, rotate left, close keeps place and picks, the saved PDF has the rotation', async () => {
+    const merge = mergeView();
+    const mode = merge.getByRole('switch', { name: 'Page mode' });
+    const strip = merge.getByRole('list', { name: 'Picked pages in merge order' });
+    const label = `${basename(second)} p2`;
+    const row = merge.getByRole('group', { name: `Pages of ${basename(second)}` });
+    const rowThumb = row.locator('.merge-thumb').nth(1);
+    const tile = strip.getByRole('listitem', { name: label, exact: true });
+    const magnify = row.getByRole('button', { name: `Magnify ${label}`, exact: true });
+    const big = box(`Magnified ${label}`);
+    const zoomTo = (name) => big.getByRole('button', { name, exact: true }).click();
+    const size = () => big.locator('canvas').evaluate((canvas) => ({
+      w: canvas.width, h: canvas.height, sharp: Math.abs(canvas.width - canvas.getBoundingClientRect().width * devicePixelRatio) < 2,
+    }));
+    // the fixture pages are portrait: turned left, a thumbnail is landscape
+    const wide = (thumb) => thumb.locator('canvas').evaluate((canvas) => canvas.width > canvas.height);
+    const state = async () => ({
+      scroll: await merge.evaluate((el) => el.scrollTop),
+      picked: await merge.locator('.merge-rows .merge-pick').evaluateAll((all) => all.map((one) => one.getAttribute('aria-pressed'))),
+      order: await strip.locator('li').evaluateAll((items) => items.map((item) => item.getAttribute('aria-label'))),
+    });
+
+    await mode.check();
+    await pickPage(second, 2).click();
+    await pickPage(first, 1).click();
+    await until('two picks', async () => await strip.locator('li').count() === 2);
+    await until('row thumbnail drawn, portrait', async () => !await wide(rowThumb));
+    await magnify.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    const before = await state();
+    assert(before.scroll > 0, 'the tab is scrolled');
+
+    await magnify.click();
+    await big.waitFor();
+    let fitted;
+    await until('page drawn to fit, sharp', async () => { fitted = await size(); return fitted.sharp && fitted.h > 300; });
+    const grown = (what, height) => until(what, async () => {
+      const now = await size();
+      assert(Math.abs(now.h - height) <= 3 && now.sharp, `${JSON.stringify(now)}, wanted height ${height}`);
+      return true;
+    });
+    await zoomTo('Zoom in');
+    await grown('Zoom in: drawn again, bigger', fitted.h * 1.25);
+    await big.locator('.merge-preview-page').hover();
+    await page.keyboard.down('Control');
+    await page.mouse.wheel(0, -100);
+    await page.keyboard.up('Control');
+    await grown('Ctrl+wheel zooms in', fitted.h * 1.25 * 1.1);
+    await zoomTo('Zoom out');
+    await grown('Zoom out', fitted.h * 1.1);
+    await zoomTo('Rotate left');
+    await until('magnifier turned', async () => { const now = await size(); return now.w > now.h; });
+
+    await mkdir('shots', { recursive: true });
+    for (const scheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.screenshot({ path: `shots/vmerge-c-${scheme}.png` });
+    }
+    await page.emulateMedia({ colorScheme: null });
+    await zoomTo('Close');
+    await big.waitFor({ state: 'hidden' });
+    await until('row and strip thumbnails show the rotation', async () => await wide(rowThumb) && await wide(tile.locator('.merge-thumb')));
+    assert.deepEqual(await state(), before, 'same scroll place, picks and order');
+
+    // from the strip tile, at 1024 px; Rotate right and left cancel out; Esc closes
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 700, deviceScaleFactor: 1, mobile: false });
+    try {
+      await tile.getByRole('button', { name: `Magnify ${label}`, exact: true }).click();
+      await big.waitFor();
+      await until('opens with the rotation', async () => { const now = await size(); return now.w > now.h; });
+      await zoomTo('Rotate right');
+      await until('Rotate right: portrait again', async () => { const now = await size(); return now.h > now.w; });
+      await zoomTo('Rotate left');
+      await until('Rotate left again', async () => { const now = await size(); return now.w > now.h; });
+      await page.screenshot({ path: 'shots/vmerge-c-1024.png' });
+      await page.keyboard.press('Escape');
+      await big.waitFor({ state: 'hidden' });
+    } finally {
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+    }
+    await page.screenshot({ path: 'shots/vmerge-c-tiles.png' });
+
+    await merge.getByRole('button', { name: 'Merge PDF 2 pages', exact: true }).click();
+    await saved();
+    const target = join(root, 'out', 'merged.pdf');
+    const pdf = await PDFDocument.load(await readFile(target));
+    assert.deepEqual(pdf.getPages().map((page) => page.getRotation().angle), [270, 0], 'second p2 turned left, first p1 not');
+    await checkMerged(target, 2);
+
+    // leave page mode off and the pages unrotated for the next step
+    await page.keyboard.press('Control+Shift+M');
+    await merge.getByRole('button', { name: 'Reset', exact: true }).click();
+    await mode.uncheck();
+  });
+
   await step('merge tab: file cards, live drag, preview, Reset / Restart, ask on close', async () => {
     await page.keyboard.press('Control+Shift+M');
     const merge = mergeView();

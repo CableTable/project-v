@@ -26,6 +26,7 @@ export const expandPages = (files) => files.flatMap((file) =>
 /** Reset: the files back in the order they were added (`added`), every page in again, unrotated, nothing picked. */
 export function resetFiles(list) {
   const files = [...list].sort((a, b) => a.added - b.added);
+  for (const file of files) file.sheets = expandPages([file]); // the page rotations
   return { files, pages: expandPages(files), picks: [] };
 }
 
@@ -56,8 +57,9 @@ export function selectPicks(picks, file, tool) {
 export const pagesToMerge = (pageMode, pages, picks) => (pageMode ? picks : pages)
   .map(({ file, pageIndex }) => ({ file, pageIndex, rotate: file.sheets?.[pageIndex]?.rotate ?? 0 }));
 
-export const rotatePage = (pages, index) => hasIndex(pages, index)
-  ? pages.map((page, i) => i === index ? { ...page, rotate: (page.rotate + 90) % 360 } : page)
+/** `direction`: 1 turns right (clockwise), -1 left. */
+export const rotatePage = (pages, index, direction = 1) => hasIndex(pages, index)
+  ? pages.map((page, i) => i === index ? { ...page, rotate: (page.rotate + direction * 90 + 360) % 360 } : page)
   : pages;
 
 export function pagesByFile(pages) {

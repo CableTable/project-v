@@ -51,6 +51,22 @@ test('merge Reset: files back in the order added, every page in again and unrota
 
 const short = (picks) => picks.map(({ file, pageIndex }) => `${file.name}${pageIndex + 1}`).join(' ');
 
+test('magnifier rotate: left and right wrap, the turn reaches pagesToMerge, Reset makes it 0 again', () => {
+  const start = [{ rotate: 0 }];
+  assert.equal(rotatePage(start, 0, -1)[0].rotate, 270);
+  assert.equal(rotatePage(rotatePage(start, 0, -1), 0, 1)[0].rotate, 0, '270 -> 0');
+  assert.equal(rotatePage(start, 0, 1)[0].rotate, 90);
+  assert.equal(rotatePage(rotatePage(start, 0, 1), 0, -1)[0].rotate, 0, '90 -> 0');
+  assert.equal(start[0].rotate, 0, 'the input is not changed');
+
+  const a = { name: 'a', added: 0, pageCount: 2 };
+  a.sheets = rotatePage(expandPages([a]), 1, -1);
+  const rotations = () => merge.pagesToMerge(true, [], merge.selectPicks([], a, 'all')).map(({ rotate }) => rotate);
+  assert.deepEqual(rotations(), [0, 270]);
+  merge.resetFiles([a]);
+  assert.deepEqual(rotations(), [0, 0]);
+});
+
 test('page picks: a click picks and un-picks, and the list keeps the order the picks were made in', () => {
   const a = { name: 'a', pageCount: 3 }, b = { name: 'b', pageCount: 2 };
   let picks = merge.togglePick([], b, 1);
