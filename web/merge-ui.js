@@ -38,6 +38,9 @@ function clearThumb(thumb) {
   thumb.box.replaceChildren();
 }
 
+// the file card and its Preview show page 1; a PDF can have no pages
+const cardRotation = (file) => file.sheets[0]?.rotate ?? 0;
+
 async function paintThumb(thumb) {
   const { file, pageIndex, rotate, box, size: [maxWidth, maxHeight] = [72, 88], dpr = 1 } = thumb;
   const job = {};
@@ -192,7 +195,8 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
   function showPreview(file) {
     if (!file.pdf) return;
     openDialog(`Preview ${file.name}`, false);
-    Object.assign(previewThumb, { file, pageIndex: 0, rotate: 0, size: [innerWidth - 96, innerHeight - 130], dpr: 1 });
+    // modal: no page can be turned while it is open, so the rotation is read once
+    Object.assign(previewThumb, { file, pageIndex: 0, rotate: cardRotation(file), size: [innerWidth - 96, innerHeight - 130], dpr: 1 });
     paintThumb(previewThumb);
   }
 
@@ -283,6 +287,10 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
       file.rangeLabel.hidden = pageMode;
       file.remove.disabled = busy;
       file.card.draggable = !busy;
+      if (file.cardThumb && file.cardThumb.rotate !== cardRotation(file)) {
+        file.cardThumb.rotate = cardRotation(file);
+        repaint(file.cardThumb);
+      }
       if (!file.row) continue;
       for (const control of file.tools) control.disabled = busy;
       const on = new Set(picked.get(file)?.map(({ pageIndex }) => pageIndex));
@@ -501,7 +509,8 @@ export function createMergeWindow({ tauri, fromPath, fromFile, openResult, askUs
       file.pageCount = pdf.numPages;
       file.sheets = expandPages([file]); // each page's rotation
       file.info.textContent += ` · ${pdf.numPages} ${pdf.numPages === 1 ? 'page' : 'pages'}`;
-      observeThumb({ file, pageIndex: 0, rotate: 0, box: file.thumb, size: [144, 168] });
+      file.cardThumb = { file, pageIndex: 0, rotate: cardRotation(file), box: file.thumb, size: [144, 168] };
+      observeThumb(file.cardThumb);
       setPages(setFilePages(list, pages, file, expandPages([file])));
     } catch (error) {
       if (!list.includes(file)) return;

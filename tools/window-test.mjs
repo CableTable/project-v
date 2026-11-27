@@ -667,6 +667,74 @@ try {
     await mode.uncheck();
   });
 
+  await step('merge card: thumbnail and Preview show page 1 rotation, Reset puts it back', async () => {
+    const merge = mergeView();
+    const mode = merge.getByRole('switch', { name: 'Page mode' });
+    const card = (file) => merge.getByRole('listitem', { name: basename(file), exact: true });
+    const label = `${basename(second)} p1`;
+    const big = box(`Magnified ${label}`);
+    // the fixture pages are portrait: turned, a picture is landscape. The card is in view, else it is not drawn.
+    const drawn = (what, canvas, wide) => until(what, async () => {
+      assert.equal(await canvas.evaluate((el) => el.width > el.height, null, { timeout: 500 }), wide);
+      return true;
+    });
+    const cardDrawn = async (what, file, wide) => {
+      await card(file).evaluate((el) => el.scrollIntoView({ block: 'center' }));
+      await drawn(what, card(file).locator('.merge-thumb canvas'), wide);
+    };
+    const preview = async (what, file, wide) => {
+      await card(file).getByRole('button', { name: `Preview ${basename(file)}` }).click();
+      const dialog = box(`Preview ${basename(file)}`);
+      await drawn(what, dialog.locator('canvas'), wide);
+      if (what === 'Preview turned') {
+        for (const scheme of ['light', 'dark']) {
+          await page.emulateMedia({ colorScheme: scheme });
+          await page.screenshot({ path: `shots/vmerge-c2-preview-${scheme}.png` });
+        }
+        await page.emulateMedia({ colorScheme: null });
+      }
+      await page.keyboard.press('Escape');
+      await dialog.waitFor({ state: 'hidden' });
+    };
+
+    await cardDrawn('card portrait at first', second, false);
+    await mode.check();
+    await merge.getByRole('button', { name: `Magnify ${label}`, exact: true }).click();
+    await big.getByRole('button', { name: 'Rotate left', exact: true }).click();
+    await drawn('magnifier turned', big.locator('canvas'), true);
+    await big.getByRole('button', { name: 'Close', exact: true }).click();
+    await big.waitFor({ state: 'hidden' });
+    await cardDrawn('magnifier Rotate left turns the card', second, true);
+    await preview('Preview turned', second, true);
+
+    await merge.getByRole('button', { name: `Rotate 90° ${basename(first)} p1` }).click();
+    await cardDrawn('row tile rotate turns the card', first, true);
+    await merge.getByRole('button', { name: `Rotate 90° ${basename(second)} p2` }).click();
+    await cardDrawn('page 2 does not decide the card', second, true);
+
+    await mkdir('shots', { recursive: true });
+    await card(first).evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    for (const scheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.screenshot({ path: `shots/vmerge-c2-${scheme}.png` });
+    }
+    await page.emulateMedia({ colorScheme: null });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 700, deviceScaleFactor: 1, mobile: false });
+    try {
+      await card(first).evaluate((el) => el.scrollIntoView({ block: 'center' }));
+      await page.screenshot({ path: 'shots/vmerge-c2-1024.png' });
+    } finally {
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+    }
+
+    await merge.getByRole('button', { name: 'Reset', exact: true }).click();
+    await cardDrawn('Reset: first card back', first, false);
+    await cardDrawn('Reset: second card back', second, false);
+    await preview('Preview back after Reset', second, false);
+    await mode.uncheck();
+  });
+
   await step('merge tab: file cards, live drag, preview, Reset / Restart, ask on close', async () => {
     await page.keyboard.press('Control+Shift+M');
     const merge = mergeView();
