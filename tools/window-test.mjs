@@ -493,10 +493,22 @@ try {
     await merge.getByRole('button', { name: `Remove ${basename(first)}`, exact: true }).click();
     await order('one file left, 2 pages', second);
     await mode.check();
-    assert(await go.isDisabled(), 'one file, no picks: disabled');
+    const onePicked = () => until('one file, one pick: enabled', async () => {
+      assert.equal(await go.textContent(), 'Merge PDF 1 page');
+      assert(await go.isEnabled());
+      return true;
+    });
+    const disabled = (what) => until(what, async () => {
+      assert(await go.isDisabled());
+      return true;
+    });
+    // enabled first: the one check here that fails without the change
     await pickPage(second, 2).click();
-    assert.equal(await go.textContent(), 'Merge PDF 1 page');
-    assert(await go.isEnabled(), 'one file, one pick: enabled');
+    await onePicked();
+    await pickPage(second, 2).click();
+    await disabled('one file, no picks: disabled');
+    await pickPage(second, 2).click();
+    await onePicked();
     await go.click();
     await saved();
     const target = join(root, 'out', 'merged.pdf');
@@ -506,7 +518,7 @@ try {
 
     await page.keyboard.press('Control+Shift+M');
     await mode.uncheck();
-    assert(await go.isDisabled(), 'file mode, one file: disabled');
+    await disabled('file mode, one file: disabled');
     // leave it as the next step expects it: both files, bookmark per file on
     await merge.getByRole('button', { name: 'Restart', exact: true }).click();
     await box('Remove all files?').getByRole('button', { name: 'Remove all' }).click();
